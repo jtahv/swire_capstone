@@ -1,0 +1,2534 @@
+---
+title: "Swire Coca-Cola Utah"
+author: "IS 6813: Group 5"
+date: today
+format:
+  html:
+    toc: true
+    toc_float: true  # Enable floating TOC with automatic highlighting
+    self-contained: true  # HTML only, no folders
+    code-tools: true
+    code-fold: TRUE
+    code-summary: "Show the code"
+execute:
+  echo: true
+  eval: true
+  message: false
+  warning: false
+editor: 
+  markdown: 
+    wrap: sentence
+---
+
+## Introduction
+
+Our analysis begins with feature engineering, where we transform raw data into meaningful variables using established libraries and census data. 
+
+We then explore the RFM (Recency, Frequency, Monetary) scoring framework to segment customers based on their purchasing behavior, examining metrics such as days between orders, time since last purchase, and total quantity ordered.
+
+The customer growth section mainly uses a couple different growth calculations to analyze which customers and industries have the greatest growth potential. We used k-means clustering techniques and ran an ARIMA model in this section.
+
+Further analytical techniques include Principal Component Analysis (PCA) for dimensionality reduction and pattern identification, followed by K-means clustering to segment customers into meaningful groups. We also deploy Random Forest modeling to identify key drivers of customer behavior.
+
+Finally, we develop a custom growth score to look at customer potential one more time.
+
+## 1.0 Feature Engineering
+
+### 1.1 Libraries Used
+```{r setup, include=FALSE}
+library(rmarkdown); library(tidyverse); library(knitr); library(matrixStats); library(ROSE); library(DMwR2); library(randomForest); library(C50); library(clusterSim); library(fpc); library(fossil); library(cvTools); library(cluster); library(flexclust); library(mclust); library(viridis); library(ggplot2); library(rpart); library(RWeka); library(kernlab); library(MLmetrics); library(smotefamily); library(caret); library(rminer); library(tictoc); library(rpart.plot); library(psych); library(ROCR); library(glmnet); library(car); library(reshape2); library(ggcorrplot); library(dplyr); library(tidyr); library(grf); library(kableExtra); library(formattable); library(rattle); library(factoextra); library(corrplot); library(dataPreparation); library(scales); library(DT); library(lubridate); library(data.table); library(glue); library(readxl); library(janitor); library(RColorBrewer); library(tidycensus); library(sf); library(doParallel); library(forecast)
+
+
+one_seed<-500
+
+# Suppress warnings globally
+options(warn = -1)
+
+# Reference Date
+reference_date <- as.Date("2025-01-01")
+
+mydir <- getwd()
+setwd(mydir)
+```
+
+```{r}
+
+# Load the full_data CSV
+full_data <- read.csv(file = "full_data.csv", sep = ",", stringsAsFactors = FALSE)
+
+# Load the full_data_customer CSV
+full_data_customer <- read.csv(file = "full_data_customer.csv", sep = ",", stringsAsFactors = FALSE)
+
+```
+
+### 1.1 Census Data
+
+To provide more detailed information about the locations of each store, we will be adding data obtained from the 2023 Census. 
+
+Although we have 145 instances of addresses (out of 1,801) with the same coordinates for different ZIP codes, we have decided to use the coordinates. This choice was made because our attempt to retrieve Census data based on ZIP codes was less effective. Different customers, even those sharing the same ZIP code, can have the same coordinates when located in shopping centers or other areas with multiple stores.
+
+Below are the descriptions of the data we will import:
+
+```{r, out.height=2}
+# Creating the data for the table
+census_data <- tibble(
+  variable = c(
+    "MED_HH_INC", "GINI_IDX", "PER_CAP_INC", "MED_HOME_VAL", "POV_POP", 
+    "INC_LVL_1", "INC_LVL_2", "INC_LVL_3", "INC_LVL_4", "INC_LVL_5", 
+    "INC_LVL_6", "INC_LVL_7", "INC_LVL_8", "INC_LVL_9", "INC_LVL_10", 
+    "INC_LVL_11", "INC_LVL_12", "INC_LVL_13", "INC_LVL_14", "INC_LVL_15", 
+    "INC_LVL_16", "TOT_HOUS_UNITS", "VAC_HOUS_UNITS", "MED_GROSS_RENT", "BACH_DEG", 
+    "MAST_DEG", "DOC_DEG", "UNEMP_POP", "EMP_POP", "TOT_WORK_POP", 
+    "SNAP_HH", "MED_FAM_INC", "TOT_POP", "MALE_POP", "FEMALE_POP", 
+    "COMMUTE_POP", "COMMUTE_POP_DRIVE"
+  ),
+  description = c(
+    "Median household income", "Gini index of income inequality", 
+    "Per capita income", "Median home value", "Population below poverty", 
+    "Income less than $10,000", "$10,000 to $14,999", "$15,000 to $19,999", 
+    "$20,000 to $24,999", "$25,000 to $29,999", "$30,000 to $34,999", 
+    "$35,000 to $39,999", "$40,000 to $44,999", "$45,000 to $49,999", 
+    "$50,000 to $59,999", "$60,000 to $74,999", "$75,000 to $99,999", 
+    "$100,000 to $124,999", "$125,000 to $149,999", "$150,000 to $199,999", 
+    "$200,000 or more", "Total housing units", "Vacant housing units", 
+    "Median gross rent", "Bachelor's degree holders", "Master's degree holders", 
+    "Doctoral degree holders", "Unemployed population", "Employed population", 
+    "Total working population", "Food stamp households", "Median family income", 
+    "Total population", "Male population", "Female population", 
+    "Total commuter population", "Total commuter population driving"
+  )
+)
+
+# Table
+kable(census_data, 
+      col.names = c("Variable", "Description"), 
+      caption = "List of Census Variables and Descriptions", 
+      align = c("l", "l"))
+```
+
+```{r}
+# Census Bureau API key
+#census_api_key(" ", install = TRUE)
+
+# Create a copy of full_data_customer with only the relevant columns
+data_sf <- full_data_customer %>%
+  dplyr::select(CUSTOMER_NUMBER, LONGITUDE, LATITUDE)
+
+# Convert customer data to sf object
+data_sf <- data_sf %>%
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
+
+# Ensure the 'census_variables' object is defined
+census_variables <- tibble(
+  code = c(
+    "B19013_001", "B19083_001", "B19301_001", "B25077_001", "B17001_002", 
+    "B19001_002", "B19001_003", "B19001_004", "B19001_005", "B19001_006", 
+    "B19001_007", "B19001_008", "B19001_009", "B19001_010", "B19001_011", 
+    "B19001_012", "B19001_013", "B19001_014", "B19001_015", "B19001_016", 
+    "B19001_017", "B25001_001", "B25002_003", "B25064_001", "B15003_017", 
+    "B15003_022", "B15003_025", "B23025_005", "B23025_004", "B24011_001", 
+    "B22001_002", "B19058_001", "B01003_001", "B01001_002", "B01001_026", 
+    "B08006_001", "B08006_002"
+  ),
+  description = c(
+    "MED_HH_INC", "GINI_IDX", "PER_CAP_INC", "MED_HOME_VAL", "POV_POP", 
+    "INC_LVL_1", "INC_LVL_2", "INC_LVL_3", "INC_LVL_4", "INC_LVL_5", 
+    "INC_LVL_6", "INC_LVL_7", "INC_LVL_8", "INC_LVL_9", "INC_LVL_10", 
+    "INC_LVL_11", "INC_LVL_12", "INC_LVL_13", "INC_LVL_14", "INC_LVL_15", 
+    "INC_LVL_16", "TOT_HOUS_UNITS", "VAC_HOUS_UNITS", "MED_GROSS_RENT", "BACH_DEG", 
+    "MAST_DEG", "DOC_DEG", "UNEMP_POP", "EMP_POP", "TOT_WORK_POP", 
+    "SNAP_HH", "MED_FAM_INC", "TOT_POP", "MALE_POP", "FEMALE_POP", 
+    "COMMUTE_POP", "COMMUTE_POP_DRIVE"
+  ),
+  full_description = c(
+    "Median household income", "Gini index of income inequality", 
+    "Per capita income", "Median home value", "Population below poverty", 
+    "Income less than $10,000", "$10,000 to $14,999", "$15,000 to $19,999", 
+    "$20,000 to $24,999", "$25,000 to $29,999", "$30,000 to $34,999", 
+    "$35,000 to $39,999", "$40,000 to $44,999", "$45,000 to $49,999", 
+    "$50,000 to $59,999", "$60,000 to $74,999", "$75,000 to $99,999", 
+    "$100,000 to $124,999", "$125,000 to $149,999", "$150,000 to $199,999", 
+    "$200,000 or more", "Total housing units", "Vacant housing units", 
+    "Median gross rent", "Bachelor's degree holders", "Master's degree holders", 
+    "Doctoral degree holders", "Unemployed population", "Employed population", 
+    "Total working population", "Food stamp households", "Median family income", 
+    "Total population", "Male population", "Female population", 
+    "Total commuter population", "Total commuter population driving"
+  )
+)
+
+# Retrieve ACS data
+acs_data <- get_acs(
+  geography = "tract",
+  variables = census_variables$code,
+  year = 2023,
+  state = unique(full_data_customer$STATE),
+  geometry = TRUE
+)
+
+# Merge with descriptions
+acs_data <- acs_data %>%
+  left_join(census_variables, by = c("variable" = "code"))
+
+# Transform CRS to match customer data
+data_sf <- st_transform(data_sf, st_crs(acs_data))
+
+# Perform spatial join
+joined_data_sf <- st_join(data_sf, acs_data, join = st_intersects)
+
+# Reshape the dataset, keeping only the 'estimate' values
+census <- joined_data_sf %>%
+  mutate(
+    variable_name = if_else(variable %in% census_variables$code, description, variable)
+  ) %>%
+  pivot_wider(
+    names_from = variable_name,
+    values_from = estimate,
+    names_glue = "{variable_name}"
+  )
+
+# Select only the required columns
+census <- census %>%
+  dplyr::select(
+    CUSTOMER_NUMBER, MED_HH_INC, GINI_IDX, PER_CAP_INC, MED_HOME_VAL, POV_POP, 
+    INC_LVL_1, INC_LVL_2, INC_LVL_3, INC_LVL_4, INC_LVL_5, INC_LVL_6, 
+    INC_LVL_7, INC_LVL_8, INC_LVL_9, INC_LVL_10, INC_LVL_11, INC_LVL_12, 
+    INC_LVL_13, INC_LVL_14, INC_LVL_15, INC_LVL_16, TOT_HOUS_UNITS, 
+    VAC_HOUS_UNITS, MED_GROSS_RENT, BACH_DEG, MAST_DEG, DOC_DEG, UNEMP_POP, 
+    EMP_POP, TOT_WORK_POP, SNAP_HH, MED_FAM_INC, TOT_POP, MALE_POP, FEMALE_POP, 
+    COMMUTE_POP, COMMUTE_POP_DRIVE
+  )
+
+# Remove the geometry column and convert to a normal data frame
+census <- census %>%
+  st_drop_geometry() %>% 
+  as.data.frame()
+
+# Handle missing and infinite values (replace -Inf with NA)
+census[census == -Inf] <- NA
+
+# Optionally impute missing values or remove them
+census[is.na(census)] <- 0  # You could also choose to impute using other strategies
+
+# Aggregate census data by CUSTOMER_NUMBER, keeping the highest value for each column
+census <- census %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(across(everything(), max, na.rm = TRUE), .groups = "drop")
+
+# Perform the join between full_data_customer and census on the CUSTOMER_NUMBER column
+full_data_customer <- full_data_customer %>%
+  dplyr::left_join(census, by = "CUSTOMER_NUMBER")
+
+# Remove any duplicated columns or columns with ".x" suffixes
+full_data_customer <- full_data_customer %>%
+  dplyr::select(-ends_with(".x")) %>%
+  dplyr::rename_with(~gsub("\\.y$", "", .), ends_with(".y"))
+
+# Transforming variable types before save
+full_data_customer$COLD_DRINK_CHANNEL <- as.factor(full_data_customer$COLD_DRINK_CHANNEL)
+full_data_customer$TRADE_CHANNEL <- as.factor(full_data_customer$TRADE_CHANNEL)
+full_data_customer$SUB_TRADE_CHANNEL <- as.factor(full_data_customer$SUB_TRADE_CHANNEL)
+
+# Save the full_data_customer data frame
+#write.csv(full_data_customer, file = "data/full_data_customer.csv", row.names = FALSE)
+#write.csv(full_data, file = "data/full_data.csv", row.names = FALSE)
+
+# List all variables in the environment
+all_vars <- ls()
+
+# Exclude 'full_data', 'full_data_customer', and the new variables from removal
+vars_to_keep <- c("full_data", "full_data_customer","mydir", "one_seed", "reference_date")
+
+# Get the variables to remove
+vars_to_remove <- setdiff(all_vars, vars_to_keep)
+
+# Remove the temporary data frames
+rm(list = vars_to_remove)
+
+# Clean up by removing 'all_vars' and 'vars_to_remove'
+rm(all_vars, vars_to_remove)
+```
+
+```{r, echo=FALSE, results=FALSE}
+# Save the loaded data to new CSV files
+#write.csv(full_data, "data/full_data.csv", row.names = FALSE)
+#write.csv(full_data_customer, "data/full_data_customer.csv", row.names = FALSE)
+
+# Load the full_data CSV
+full_data <- read.csv(file = "full_data.csv", sep = ",", stringsAsFactors = FALSE)
+full_data_customer <- read.csv(file = "full_data_customer.csv", sep = ",", stringsAsFactors = FALSE)
+
+```
+
+## 2.0 RMF Score
+
+The RFM (Recency, Frequency, Monetary) analysis helps segment customers based on their purchasing behavior, allowing us to better understand consumption patterns. By adapting this model to analyze orders by customers, we aim to assess both frequency and volume of purchases. 
+
+### 2.1 Frequency - Days Between Orders
+
+To adapt the RFM analysis considering purchase periods and quantities ordered, we will analyze the orders by customers. Before calculating the number of days between orders (frequency), we will establish the number of orders per customer across all transactions, considering only those where the order of gallons or cases is greater than 0.
+
+```{r}
+# Filter valid transactions (ORDERED_CASES > 0 or ORDERED_GALLONS > 0)
+valid_orders <- full_data %>%
+  filter(ORDERED_CASES > 0 | ORDERED_GALLONS > 0)
+
+# Calculate the number of orders > 0 per customer
+orders_per_customer <- valid_orders %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(NUM_ORDERS = n(), .groups = "drop") %>%
+  ungroup()
+
+# Add the column NUM_ORDERS in full_data_customer
+full_data_customer <- full_data_customer %>%
+  left_join(orders_per_customer, by = "CUSTOMER_NUMBER")
+
+# Find customers who do not meet the condition (NO valid transactions)
+customers_not_meeting_filter <- full_data_customer %>%
+  filter(is.na(NUM_ORDERS)) %>%
+  summarise(unique_customers = n_distinct(CUSTOMER_NUMBER))
+
+# Print the number of unique customers who don't meet the filter
+#print(customers_not_meeting_filter)
+
+# Remove unnecessary intermediate data frames
+rm(valid_orders, orders_per_customer,customers_not_meeting_filter)
+
+```
+
+There are 135 customers who do not have order transactions greater than zero in the dataset; for these customers, we will consider the number of delivery transactions as orders.
+
+```{r}
+# Filter customers with NUM_ORDERS == NA
+customers_with_na_orders <- full_data_customer %>%
+  filter(is.na(NUM_ORDERS)) %>%
+  dplyr::select(CUSTOMER_NUMBER) %>%
+  distinct()
+
+# Filter valid delivery transactions (DELIVERED_CASES > 0 or DELIVERED_GALLONS > 0) in full_data
+valid_deliveries <- full_data %>%
+  filter(DELIVERED_CASES > 0 | DELIVERED_GALLONS > 0)
+
+# Calculate the number of valid deliveries per customer with NUM_ORDERS == NA
+deliveries_per_customer <- valid_deliveries %>%
+  filter(CUSTOMER_NUMBER %in% customers_with_na_orders$CUSTOMER_NUMBER) %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(NUM_DELIVERIES = n()) %>%
+  ungroup()
+
+# Update NUM_ORDERS only for customers with NUM_ORDERS == NA
+full_data_customer <- full_data_customer %>%
+  left_join(deliveries_per_customer, by = "CUSTOMER_NUMBER") %>%
+  mutate(
+    NUM_ORDERS = if_else(is.na(NUM_ORDERS), NUM_DELIVERIES, NUM_ORDERS)
+  ) %>%
+  dplyr::select(-NUM_DELIVERIES)  # Drop the temporary NUM_DELIVERIES column
+
+# Ensure full_data has the NUM_ORDERS column with the same values as full_data_customer
+full_data <- full_data %>%
+  left_join(full_data_customer %>% dplyr::select(CUSTOMER_NUMBER, NUM_ORDERS), by = "CUSTOMER_NUMBER")
+
+# Remove unnecessary intermediate data frames
+rm(customers_with_na_orders, valid_deliveries, deliveries_per_customer)
+
+```
+
+Considering all the order transactions recorded in 2023 and 2024, each unique customer has a minimum of 1 transaction and a maximum of 392 transactions.
+
+To better understand the consumption profile of each customer, below we will visualize the number of customers in transaction bins where the orders of cases or gallons were greater than 0. For the 135 unique customers who did not have order transactions but received volume, we considered these operations as orders.
+
+
+```{r}
+# Count the number of valid transactions per customer
+customers_by_bin <- full_data_customer %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(transaction_count = sum(NUM_ORDERS, na.rm = TRUE), .groups = "drop") %>%
+  mutate(transaction_bin = case_when(
+    transaction_count == 1 ~ "1",
+    transaction_count >= 2 & transaction_count <= 10 ~ "2-10",
+    transaction_count >= 11 & transaction_count <= 20 ~ "11-20",
+    transaction_count >= 21 & transaction_count <= 30 ~ "21-30",
+    transaction_count >= 31 & transaction_count <= 40 ~ "31-40",
+    transaction_count >= 41 & transaction_count <= 50 ~ "41-50",
+    transaction_count >= 51 & transaction_count <= 100 ~ "51-100",
+    transaction_count >= 101 & transaction_count <= 200 ~ "101-200",
+    transaction_count >= 201 & transaction_count <= 300 ~ "201-300",
+    transaction_count > 300 ~ ">300",
+    TRUE ~ "Other"
+  )) %>%
+  mutate(transaction_bin = factor(transaction_bin, levels = c("1", "2-10", "11-20", "21-30", "31-40", 
+                                                             "41-50", "51-100", "101-200", "201-300", ">300"))) %>%
+  group_by(transaction_bin) %>%
+  summarise(unique_customers = n_distinct(CUSTOMER_NUMBER), .groups = "drop") %>%
+  arrange(transaction_bin)
+
+# Create a bar plot resembling a histogram of unique customers per transaction bin
+ggplot(customers_by_bin, aes(x = transaction_bin, y = unique_customers, fill = transaction_bin)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = unique_customers), vjust = -0.3, size = 3, color = "black") +  # Add customer counts above bars
+  scale_fill_brewer(palette = "Set3") +  # Use RColorBrewer's Set3 palette
+  labs(title = "Number of Unique Customers by Transaction Count (Orders > 0)",
+       x = "Transaction Count Bins",
+       y = "Number of Unique Customers") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5, vjust = 0.5),  # Centered x-axis labels without rotation
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(),  # Remove minor vertical grid lines
+    axis.text = element_text(size = 9),  # Set the size of axis labels
+    axis.title = element_text(size = 10)  # Set the size of axis titles
+  )
+
+# Remove unnecessary intermediate data frames
+rm(customers_by_bin)
+
+```
+
+
+
+The histogram shows that 1,218 customers have only one order transaction, making it impossible to calculate the days between orders. Additionally, 6,798 customers have between 2 and 10 orders. To ensure more reliable figures, we will consider only customers with at least 11 orders for this indicator. As a result, all customers with fewer transactions will be assigned a value of 731 days between orders, indicating low order frequency over a two-year range.
+
+
+
+```{r}
+# Calculate the number of days between orders for customers with NUM_ORDERS >= 11
+full_data <- full_data %>%
+  arrange(CUSTOMER_NUMBER, TRANSACTION_DATE) %>%  # Sort by CUSTOMER_NUMBER and TRANSACTION_DATE
+  group_by(CUSTOMER_NUMBER) %>%
+  mutate(DAYS_BETWEEN_ORD = case_when(
+    NUM_ORDERS <= 10 ~ 731,  # Set DAYS_BETWEEN_ORD to 731 for customers with NUM_ORDERS <= 10
+    NUM_ORDERS >= 11 & 
+      (ORDERED_CASES > 0 | ORDERED_GALLONS > 0) ~ 
+      as.numeric(difftime(TRANSACTION_DATE, lag(TRANSACTION_DATE), units = "days")),  # Calculate days between orders for NUM_ORDERS >= 11 where ORDERED_CASES or ORDERED_GALLONS > 0
+    NUM_ORDERS >= 11 & 
+      !(ORDERED_CASES > 0 | ORDERED_GALLONS > 0) &  # Only apply this when the previous condition fails
+      (DELIVERED_CASES > 0 | DELIVERED_GALLONS > 0) ~ 
+      as.numeric(difftime(TRANSACTION_DATE, lag(TRANSACTION_DATE), units = "days")),  # If no ORDERED_CASES or ORDERED_GALLONS > 0, calculate with DELIVERED_CASES or DELIVERED_GALLONS
+    TRUE ~ NA_real_  # For all other cases
+  )) %>%
+  ungroup()
+
+
+# Calculate the average days between orders per customer and round the result to the nearest integer
+avg_days_per_customer <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(AVG_DAYS_BET_ORD = round(mean(DAYS_BETWEEN_ORD, na.rm = TRUE), 0)) %>%  # Round to nearest integer
+  ungroup()
+
+# Update full_data_customer with the average days between orders
+full_data_customer <- full_data_customer %>%
+  left_join(avg_days_per_customer, by = "CUSTOMER_NUMBER")
+
+# Remove temporary variables
+rm(avg_days_per_customer)
+
+
+```
+
+```{r}
+# Count the number of unique customers in each days between orders bin without adding a new column to the dataset
+customers_by_bin <- full_data_customer %>%
+  mutate(DAYS_BETWEEN_ORD_BIN = case_when(
+    AVG_DAYS_BET_ORD >= 1 & AVG_DAYS_BET_ORD <= 10 ~ "1-10 days",
+    AVG_DAYS_BET_ORD > 10 & AVG_DAYS_BET_ORD <= 20 ~ "11-20 days",
+    AVG_DAYS_BET_ORD > 20 & AVG_DAYS_BET_ORD <= 30 ~ "21-30 days",
+    AVG_DAYS_BET_ORD > 30 & AVG_DAYS_BET_ORD <= 40 ~ "31-40 days",
+    AVG_DAYS_BET_ORD > 40 & AVG_DAYS_BET_ORD <= 50 ~ "41-50 days",
+    AVG_DAYS_BET_ORD > 50 ~ "Above 50 days",
+    TRUE ~ "NA"
+  )) %>%
+  group_by(DAYS_BETWEEN_ORD_BIN) %>%
+  summarise(unique_customers = n_distinct(CUSTOMER_NUMBER), .groups = "drop") %>%
+  mutate(percentage_customers = unique_customers / sum(unique_customers) * 100) %>%  # Calculate percentage
+  arrange(DAYS_BETWEEN_ORD_BIN)
+
+# Create a bar plot resembling a histogram of unique customers percentage per days between orders bin
+ggplot(customers_by_bin, aes(x = DAYS_BETWEEN_ORD_BIN, y = percentage_customers, fill = DAYS_BETWEEN_ORD_BIN)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = scales::percent(percentage_customers / 100)), vjust = -0.3, size = 3) +  # Add percentage labels above bars
+  scale_fill_brewer(palette = "Set3") +  # Use RColorBrewer's Set3 palette
+  labs(title = "Percentage of Unique Customers by Days Between Orders",
+       x = "Days Between Orders",
+       y = "Percentage of Unique Customers") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5, vjust = 0.5),  # Centered x-axis labels without rotation
+    panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+    panel.grid.minor.x = element_blank(),  # Remove minor vertical grid lines
+    axis.text = element_text(size = 9),  # Set the size of axis labels
+    axis.title = element_text(size = 10)  # Set the size of axis titles
+  )
+
+# Remove unnecessary intermediate data frames
+rm(customers_by_bin)
+
+```
+
+Around 20% of customers have an average order interval of up to 10 days, while 44% have an average interval of more than 30 days.
+
+### 2.2  Recency - Time Since Last Order
+
+To calculate recency, we will consider the number of days between the date of the last order and 01-01-2025.
+
+```{r}
+# Create the LAST_ORDER_DATE column, excluding rows where all specified columns are zero
+full_data <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  mutate(
+    LAST_ORDER_DATE = if_else(
+      (ORDERED_CASES > 0 | ORDERED_GALLONS > 0) & 
+      !(ORDERED_CASES == 0 & ORDERED_GALLONS == 0 & LOADED_CASES == 0 & LOADED_GALLONS == 0 & DELIVERED_CASES == 0 & DELIVERED_GALLONS == 0),
+      as.character(max(TRANSACTION_DATE, na.rm = TRUE)), 
+      NA_character_
+    )
+  ) %>%
+  ungroup()
+
+```
+
+There are 5,754 transaction rows where it's not possible to assign the last transaction date based on orders. For these, we will use the date of the last delivery operation as the reference date. The last two transactions, which refer to return transactions, will be excluded.
+
+
+```{r, message=FALSE}
+# For customers with LAST_ORDER_DATE as NA, consider the latest TRANSACTION_DATE where DELIVERED_CASES or DELIVERED_GALLONS > 0
+full_data <- full_data %>%
+  mutate(LAST_ORDER_DATE = as.Date(LAST_ORDER_DATE)) %>%  # Convert LAST_ORDER_DATE to Date format
+  group_by(CUSTOMER_NUMBER) %>%
+  mutate(
+    LAST_ORDER_DATE = if_else(
+      is.na(LAST_ORDER_DATE) & (ORDERED_CASES == 0 & ORDERED_GALLONS == 0),
+      as.Date(max(TRANSACTION_DATE[DELIVERED_CASES > 0 | DELIVERED_GALLONS > 0], na.rm = TRUE)),
+      LAST_ORDER_DATE
+    )
+  ) %>%
+  ungroup()
+
+
+# Remove the last 2 rows where LAST_ORDER_DATE is NA (return operations only)
+full_data <- full_data %>%
+  filter(!is.na(LAST_ORDER_DATE))
+
+# Remove rows where LAST_ORDER_DATE is Inf (return operations only)
+full_data <- full_data %>%
+  filter(!is.infinite(LAST_ORDER_DATE))
+
+# Reference Date
+reference_date <- as.Date("2025-01-01")
+
+# Create the DAYS_AF_LAST_ORD column in full_data
+full_data <- full_data %>%
+  mutate(
+    DAYS_AF_LAST_ORD = ifelse(!is.na(LAST_ORDER_DATE), 
+                              as.numeric(difftime(reference_date, LAST_ORDER_DATE, units = "days")),
+                              NA_real_))
+
+```
+
+```{r}
+# Aggregate full_data to get the latest LAST_ORDER_DATE and DAYS_AF_LAST_ORD for each CUSTOMER_NUMBER
+full_data_aggregated <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(
+    LAST_ORDER_DATE = max(LAST_ORDER_DATE, na.rm = TRUE),
+    DAYS_AF_LAST_ORD = max(DAYS_AF_LAST_ORD, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Join the aggregated data with full_data_customer
+full_data_customer <- full_data_customer %>%
+  left_join(full_data_aggregated, by = "CUSTOMER_NUMBER")
+
+
+# # Remove unnecessary intermediate data frames
+rm(full_data_aggregated)
+```
+
+
+
+### 2.3 Total Quantity Ordered
+
+Since we do not have access to the prices charged, and understanding that these are likely different among customer types and demanded volumes, instead of considering monetary values, we will focus on the quantities demanded. This is because our current focus is on customer segmentation.
+
+```{r}
+# Calculate the total ordered by customer by summing ORDERED_CASES and ORDERED_GALLONS
+total_ordered_per_customer <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(TOTAL_ORDERED = sum(ORDERED_CASES, na.rm = TRUE) + sum(ORDERED_GALLONS, na.rm = TRUE)) %>%
+  ungroup()
+
+# Add the TOTAL_ORDERED column to full_data_customer by CUSTOMER_NUMBER
+full_data_customer <- full_data_customer %>%
+  left_join(total_ordered_per_customer, by = "CUSTOMER_NUMBER")
+
+# Identify customers with TOTAL_ORDERED == 0
+customers_with_zero_ordered <- total_ordered_per_customer %>%
+  filter(TOTAL_ORDERED == 0)
+
+# For those customers, calculate DELIVERED_CASES + DELIVERED_GALLONS from full_data
+deliveries_for_zero_orders <- full_data %>%
+  filter(CUSTOMER_NUMBER %in% customers_with_zero_ordered$CUSTOMER_NUMBER) %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(DELIVERED_TOTAL = sum(DELIVERED_CASES, na.rm = TRUE) + sum(DELIVERED_GALLONS, na.rm = TRUE)) %>%
+  ungroup()
+
+# Merge the delivery values into the total_ordered_per_customer dataframe,
+# ensuring that if TOTAL_ORDERED is zero, it is replaced by DELIVERED_TOTAL
+total_ordered_per_customer <- total_ordered_per_customer %>%
+  left_join(deliveries_for_zero_orders, by = "CUSTOMER_NUMBER") %>%
+  mutate(
+    TOTAL_ORDERED = if_else(TOTAL_ORDERED == 0, DELIVERED_TOTAL, TOTAL_ORDERED)
+  ) %>%
+  dplyr::select(CUSTOMER_NUMBER, TOTAL_ORDERED)
+
+# Add the updated TOTAL_ORDERED column to full_data_customer by CUSTOMER_NUMBER
+full_data_customer <- full_data_customer %>%
+  left_join(total_ordered_per_customer, by = "CUSTOMER_NUMBER")
+
+# Remove the 'TOTAL_ORDERED.x' column and rename 'TOTAL_ORDERED.y' to 'TOTAL_ORDERED'
+full_data_customer <- full_data_customer %>%
+  dplyr::select(-TOTAL_ORDERED.x) %>%
+  dplyr::rename(TOTAL_ORDERED = TOTAL_ORDERED.y)
+
+# Remove unnecessary intermediate data frames
+rm(total_ordered_per_customer, customers_with_zero_ordered, deliveries_for_zero_orders)
+
+```
+
+
+
+### 2.4 Adapted RFM Score
+
+Using the created variables, we will assign scores to classes based on their distribution. The total score, along with its relative weight, forms the **RFM_SCORE**, which serves as an additional variable for customer analysis and segmentation.
+
+We use the quantitative distribution of the variables to assign scores, as some have a wide range. Each variable will receive a score between 1 and 10. For frequency, we created two variables and decided to give weight not only to the number of orders but also to the interval between them. As a result, the minimum score is 4, and the maximum is 40.
+
+```{r}
+# Remove previously created columns
+#full_data_customer <- full_data_customer %>%
+#  dplyr::select(-FREQUENCY_SCORE, -RECENCY_SCORE, -VOLUME_SCORE, -RFM_SCORE)
+
+# Create Frequency Score based on NUM_ORDERS
+full_data_customer <- full_data_customer %>%
+  mutate(
+    ORDER_FREQUENCY_SCORE = case_when(
+      NUM_ORDERS >= 300 ~ 10,  
+      NUM_ORDERS >= 200 ~ 9,
+      NUM_ORDERS >= 150 ~ 8,
+      NUM_ORDERS >= 100 ~ 7,
+      NUM_ORDERS >= 75  ~ 6,
+      NUM_ORDERS >= 50  ~ 5,  # 3rd quartile
+      NUM_ORDERS >= 35  ~ 4,  # Mean
+      NUM_ORDERS >= 23  ~ 3,  # Median
+      NUM_ORDERS >= 10  ~ 2,  # 1st quartile
+      TRUE ~ 1  
+    ),
+    ORDER_INTERVAL_SCORE = case_when(
+      AVG_DAYS_BET_ORD <= 5   ~ 10,
+      AVG_DAYS_BET_ORD <= 13  ~ 9, # 1st quartile
+      AVG_DAYS_BET_ORD <= 20  ~ 8,
+      AVG_DAYS_BET_ORD <= 26  ~ 7, # Median
+      AVG_DAYS_BET_ORD <= 30  ~ 6, 
+      AVG_DAYS_BET_ORD <= 50  ~ 5,  
+      AVG_DAYS_BET_ORD <= 100 ~ 4,
+      AVG_DAYS_BET_ORD <= 210 ~ 3, # Mean
+      AVG_DAYS_BET_ORD <= 300 ~ 2,
+      TRUE ~ 1  
+    )
+  )
+
+# Create Recency Score based on DAYS_AF_LAST_ORD
+full_data_customer <- full_data_customer %>%
+  mutate(
+    RECENCY_SCORE = case_when(
+      DAYS_AF_LAST_ORD <= 7   ~ 10,  
+      DAYS_AF_LAST_ORD <= 13  ~ 9,  # 1st quartile
+      DAYS_AF_LAST_ORD <= 20  ~ 8,  
+      DAYS_AF_LAST_ORD <= 27  ~ 7,  #Median
+      DAYS_AF_LAST_ORD <= 40  ~ 6,  
+      DAYS_AF_LAST_ORD <= 50  ~ 5,
+      DAYS_AF_LAST_ORD <= 72  ~ 4,  #Mean
+      DAYS_AF_LAST_ORD <= 90  ~ 3,  #3rd quartile
+      DAYS_AF_LAST_ORD <= 180 ~ 2,  #Six months
+      TRUE ~ 1  
+    )
+  )
+
+# Create Volume Score based on TOTAL_ORDERED
+full_data_customer <- full_data_customer %>%
+  mutate(
+    VOLUME_SCORE = case_when(
+      TOTAL_ORDERED >= 300000 ~ 10,  
+      TOTAL_ORDERED >= 100000 ~ 9,
+      TOTAL_ORDERED >= 5000   ~ 8,
+      TOTAL_ORDERED >= 2000   ~ 7,
+      TOTAL_ORDERED >= 1267   ~ 6,  # Mean 
+      TOTAL_ORDERED >= 815    ~ 5,  # 3rd quartile
+      TOTAL_ORDERED >= 400    ~ 4,  # Threshold
+      TOTAL_ORDERED >= 302    ~ 3,  # Median
+      TOTAL_ORDERED >= 200    ~ 2,  
+      TRUE ~ 1  
+    )
+  )
+
+
+```
+
+```{r}
+
+# Calculate the overall RFM Score as the sum of Recency, Frequency, Order Interval, and Volume scores
+full_data_customer <- full_data_customer %>%
+  mutate(
+    RFM_SCORE = RECENCY_SCORE + ORDER_FREQUENCY_SCORE + ORDER_INTERVAL_SCORE + VOLUME_SCORE
+  )
+
+
+# Count the number of customers in each RFM_SCORE range
+rfm_distribution <- full_data_customer %>%
+  mutate(RFM_CATEGORY = case_when(
+    RFM_SCORE <= 10 ~ "4-10",
+    RFM_SCORE <= 20 ~ "11-20",
+    RFM_SCORE <= 30 ~ "21-30",
+    TRUE ~ "31-40"
+  )) %>%
+  group_by(RFM_CATEGORY) %>%
+  summarise(CUSTOMER_COUNT = n(), .groups = "drop") %>%
+  mutate(PERCENTAGE = CUSTOMER_COUNT / sum(CUSTOMER_COUNT) * 100)
+
+# Reorder RFM_CATEGORY to ensure it starts with scores between 4 and 10
+rfm_distribution$RFM_CATEGORY <- factor(rfm_distribution$RFM_CATEGORY, 
+                                        levels = c("4-10", "11-20", "21-30", "31-40"))
+
+# Plot the distribution of RFM scores
+ggplot(rfm_distribution, aes(x = RFM_CATEGORY, y = PERCENTAGE, fill = RFM_CATEGORY)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(PERCENTAGE, 1), "%")), vjust = -0.3, size = 4) +
+  scale_fill_brewer(palette = "Set3") +  # Use Set3 color palette
+  labs(title = "Distribution of Customers by RFM Score",
+       x = "RFM Score Range",
+       y = "Percentage of Customers") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 11)
+  )
+
+# Remove unnecessary intermediate data frame
+rm(rfm_distribution)
+
+
+```
+
+The adapted RFM Score was a method we developed to condense various pieces of information related to store consumption. We found that 60% of stores have a score up to 20 (which is the median), 32% have scores between 21-30, and 8.5% have scores above 30. This indicates that there is a small number of stores with high consumption patterns.
+
+
+```{r}
+# Filter only customers where LOCAL_FOUNT_ONLY == 1
+rfm_distribution_lfo <- full_data_customer %>%
+  filter(LOCAL_FOUNT_ONLY == 1) %>%
+  mutate(RFM_CATEGORY = case_when(
+    RFM_SCORE <= 10 ~ "4-10",
+    RFM_SCORE <= 20 ~ "11-20",
+    RFM_SCORE <= 30 ~ "21-30",
+    TRUE ~ "31-40"
+  )) %>%
+  group_by(RFM_CATEGORY) %>%
+  summarise(CUSTOMER_COUNT = n(), .groups = "drop") %>%
+  mutate(PERCENTAGE = CUSTOMER_COUNT / sum(CUSTOMER_COUNT) * 100)
+
+# Reorder RFM_CATEGORY to ensure it starts with scores between 4 and 10
+rfm_distribution_lfo$RFM_CATEGORY <- factor(rfm_distribution_lfo$RFM_CATEGORY, 
+                                            levels = c("4-10", "11-20", "21-30", "31-40"))
+
+# Plot the distribution of RFM scores for LOCAL_FOUNT_ONLY == 1
+ggplot(rfm_distribution_lfo, aes(x = RFM_CATEGORY, y = PERCENTAGE, fill = RFM_CATEGORY)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  geom_text(aes(label = paste0(round(PERCENTAGE, 1), "%")), vjust = -0.3, size = 4) +
+  scale_fill_brewer(palette = "Set3") +  # Use Set3 color palette
+  labs(title = "Distribution of Customers by RFM Score (LOCAL_FOUNT_ONLY = 1)",
+       x = "RFM Score Range",
+       y = "Percentage of Customers") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(hjust = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 11)
+  )
+
+# Remove unnecessary intermediate data frame
+rm(rfm_distribution_lfo)
+
+
+```
+
+For customers who are local partners and consume only fountain drinks, it is clear that their consumption patterns are even lower. Nearly 74% of them have scores up to 20, and among the remaining customers, less than 3.6% have scores above 30.
+
+
+## 3.0 Customer Growth
+
+``` {r, warning = FALSE, message = FALSE}
+
+# read in cleaned code that will be used for a few parts of the analysis
+customer_data <- read.csv( "customer_data_modeling.csv" )
+transaction_data <- read.csv( "transactions_data_modeling.csv" )
+
+```
+
+The code below creates two columns. Both are month over month growth rates. One is calculated based on monthly gallons delivered and the other is based on monthly cases delivered.
+
+### 3.1 Simple Month Over Month Growth Rate Calculation
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Function to calculate average month-over-month growth rate
+calculate_mom_growth_rate <- function(df, prefix, start_year = 2023, end_year = 2024, 
+                                     start_month = 1, end_month = 12) {
+  
+  # Create vector of column names in chronological order
+  columns <- c()
+  for (year in start_year:end_year) {
+    for (month in 1:12) {
+      # Only include months in the specified range
+      if ((year == start_year && month >= start_month) || 
+          (year == end_year && month <= end_month) ||
+          (year > start_year && year < end_year)) {
+        
+        # Format month with leading zero if needed
+        month_str <- sprintf("%02d", month)
+        col_name <- paste0(prefix, "_", year, "_", month_str)
+        columns <- c(columns, col_name)
+      }
+    }
+  }
+  
+  # Filter out columns that don't exist in the dataframe
+  columns <- columns[columns %in% names(df)]
+  
+  # Calculate month-over-month growth rate for each customer
+  result <- df %>%
+    rowwise() %>%
+    mutate(
+      avg_growth_rate = {
+        # Extract values for each month
+        values <- c_across(all_of(columns))
+        
+        # Remove NA or zero values (to avoid division by zero)
+        values <- values[!is.na(values)]
+        
+        # Calculate MoM growth rates only where previous month isn't zero
+        growth_rates <- c()
+        for (i in 2:length(values)) {
+          if (values[i-1] > 0) {
+            growth_rate <- (values[i] - values[i-1]) / values[i-1]
+            growth_rates <- c(growth_rates, growth_rate)
+          }
+        }
+        
+        # Return average growth rate or NA if no valid growth rates
+        if (length(growth_rates) > 0) {
+          mean(growth_rates, na.rm = TRUE)
+        } else {
+          0
+        }
+      }
+    ) %>%
+    ungroup()
+  
+  return(result)
+}
+
+# Calculate average month-over-month growth rates
+# First for cases delivered
+customer_data <- calculate_mom_growth_rate(customer_data, "QTD_DLV_CA", 2023, 2024, 1, 12)
+customer_data <- customer_data %>% rename(DLV_CA_GR = avg_growth_rate)
+
+# Then for gallons delivered
+customer_data <- calculate_mom_growth_rate(customer_data, "QTD_DLV_GAL", 2023, 2024, 1, 12)
+customer_data <- customer_data %>% rename(DLV_GAL_GR = avg_growth_rate)
+
+# Convert growth rates to percentages for easier interpretation
+customer_data <- customer_data %>%
+  mutate(
+    DLV_CA_GR = round(DLV_CA_GR * 100, 2),
+    DLV_GAL_GR = round(DLV_GAL_GR * 100, 2)
+  )
+
+# View the new columns
+customer_data %>% dplyr::select(CUSTOMER_NUMBER, DLV_CA_GR, DLV_GAL_GR) %>% head(10)
+
+# You can also identify high growth customers with:
+high_growth_customers <- customer_data %>%
+  filter(!is.na(DLV_CA_GR) | !is.na(DLV_GAL_GR)) %>%
+  arrange(desc(pmax(DLV_CA_GR, DLV_GAL_GR, na.rm = TRUE)))
+
+# View top high growth customers
+head(high_growth_customers %>% dplyr::select(CUSTOMER_NUMBER, DLV_CA_GR, DLV_GAL_GR), 20)
+
+```
+
+### 3.2 Month Over Month Growth Rate Clustering Analysis (K Means)
+
+After creating the columns we decided to run a basic k means clustering analysis to see if there is one group with noticibly higher growth rates, and if so which cold drink channels were most prevalent. 
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 1: Prepare Data
+# Assuming your data is loaded into a dataframe called 'df'
+df <- customer_data
+
+# Select relevant features for clustering
+growth_features <- c("DLV_CA_GR", "DLV_GAL_GR")
+consumption_features <- c("AVG_ANNUAL_CONSUMP", "TOTAL_CASES_DELIVERED", "TOTAL_GALLONS_DELIVERED")
+business_features <- c("COLD_DRINK_CHANNEL", "TRADE_CHANNEL", "CHAIN_MEMBER", "LOCAL_MARKET_PARTNER")
+demographic_features <- c("MED_HH_INC", "PER_CAP_INC", "TOTAL_COST_CA_GAL")
+
+# Create dummy variables for categorical features
+df_encoded <- df %>%
+  mutate(across(c("COLD_DRINK_CHANNEL", "TRADE_CHANNEL"), as.factor)) %>%
+  model.matrix(~ . - 1, data = .) %>%
+  as.data.frame()
+
+# Select numeric features and scale them
+analysis_df <- df_encoded %>%
+  dplyr::select(all_of(c(growth_features, consumption_features, 
+                  "CHAIN_MEMBER", "LOCAL_MARKET_PARTNER", 
+                  demographic_features))) %>%
+  replace(is.na(.), 0) %>%
+  scale()
+
+```
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 2: Determine Optimal Number of Clusters
+
+# 2a: Elbow method
+set.seed(42)
+k_values <- 1:10
+wss <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  km <- kmeans(analysis_df, centers = k, nstart = 10, iter.max = 20)
+  wss[i] <- km$tot.withinss
+}
+
+# Create elbow plot manually
+elbow_data <- data.frame(k = k_values, wss = wss)
+ggplot(elbow_data, aes(x = k, y = wss)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Elbow Method for Optimal k",
+       x = "Number of clusters (k)",
+       y = "Total within-cluster sum of squares") +
+  theme_minimal()
+
+```
+
+The elbow plot is very smooth, but signals that the ideal number of clusters is 3.
+
+``` {r, warning = FALSE, message = FALSE}
+
+# 2b: Silhouette Score
+library(cluster)
+
+# Calculate silhouette scores for different k values
+set.seed(42)
+k_values <- 2:10  # Silhouette score requires at least 2 clusters
+sil_scores <- numeric(length(k_values))
+
+for (i in seq_along(k_values)) {
+  k <- k_values[i]
+  # Run kmeans
+  km <- kmeans(analysis_df, centers = k, nstart = 10)
+  # Calculate silhouette score
+  sil <- silhouette(km$cluster, dist(analysis_df))
+  sil_scores[i] <- mean(sil[,3])  # Mean silhouette width
+  cat("k =", k, "silhouette score:", sil_scores[i], "\n")
+}
+
+# Create silhouette score plot
+silhouette_data <- data.frame(k = k_values, silhouette = sil_scores)
+ggplot(silhouette_data, aes(x = k, y = silhouette)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = k_values) +
+  labs(title = "Silhouette Method for Optimal k",
+       x = "Number of clusters (k)",
+       y = "Average silhouette width") +
+  theme_minimal()
+
+# Identify optimal k (highest silhouette score)
+optimal_k <- k_values[which.max(sil_scores)]
+cat("Optimal number of clusters based on silhouette score:", optimal_k, "\n")
+
+```
+
+The silouhette method showed much clearer that the number of ideal clusters was 2. This is luckily not too different than the elbow method.
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 3: Run K-means with Optimal K
+optimal_k <- 2
+set.seed(42)
+km_result <- kmeans(analysis_df, centers = optimal_k, nstart = 25)
+
+# Add cluster assignments to original data
+df$cluster <- km_result$cluster
+
+```
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 4: Analyze Clusters
+# Summarize clusters
+cluster_summary <- df %>%
+  group_by(cluster) %>%
+  summarise(across(c(all_of(c(growth_features, consumption_features, demographic_features))), mean))
+
+# Identify high growth clusters
+growth_by_cluster <- cluster_summary %>%
+  arrange(desc(DLV_CA_GR)) %>%
+  dplyr::select(cluster, all_of(growth_features))
+
+```
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 5: Visualize key differences
+# Growth metrics by cluster
+ggplot(df, aes(x = factor(cluster), y = DLV_CA_GR)) +
+  geom_boxplot() +
+  labs(title = "Case Delivery Growth Rate by Cluster", 
+       x = "Cluster", y = "Growth Rate")
+
+```
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Step 6: Profile high growth customers
+high_growth_clusters <- growth_by_cluster$cluster[1:2]  # Top 2 clusters
+
+high_growth_profile <- df %>%
+  filter(cluster %in% high_growth_clusters) %>%
+  summarise(
+    avg_case_growth = mean(DLV_CA_GR, na.rm = TRUE),
+    avg_gallon_growth = mean(DLV_GAL_GR, na.rm = TRUE),
+    avg_consumption = mean(AVG_ANNUAL_CONSUMP, na.rm = TRUE),
+    avg_income = mean(MED_HH_INC, na.rm = TRUE),
+    chain_pct = mean(CHAIN_MEMBER) * 100,
+    local_market_pct = mean(LOCAL_MARKET_PARTNER) * 100
+  )
+
+# Business characteristics of high growth customers
+top_channels <- df %>%
+  filter(cluster %in% high_growth_clusters) %>%
+  dplyr::count(COLD_DRINK_CHANNEL) %>%
+  arrange(desc(n)) %>%
+  mutate(pct = n / sum(n) * 100) %>%
+  slice_head(n = 5)
+
+top_channels
+
+```
+
+Based on the clustering analysis, the top cold drink channels in the high growth rate cluster were dining, goods, event, public sector, and bulk trade.
+
+### 3.3 Month Over Month Growth Rate ARIMA Analysis
+
+Next we did ran an ARIMA model on the data with the simple growth rate calculation to see which cold drink channel had the brightest outlook based on the two years of data we have.
+
+``` {r, warning = FALSE, message = FALSE}
+
+# Convert date columns to Date type
+transaction_data <- transaction_data %>%
+  mutate(
+    TRANSACTION_DATE = as.Date(TRANSACTION_DATE),
+    FIRST_DELIVERY_DATE = as.Date(FIRST_DELIVERY_DATE),
+    ON_BOARDING_DATE = as.Date(ON_BOARDING_DATE)
+  )
+
+# Create a weekly aggregation function
+aggregate_by_channel_weekly <- function(data, channels_to_analyze) {
+  # Filter for the specified channels
+  filtered_data <- data %>%
+    filter(COLD_DRINK_CHANNEL %in% channels_to_analyze)
+  
+  # Aggregate data by channel and week
+  weekly_data <- filtered_data %>%
+    mutate(week_date = floor_date(TRANSACTION_DATE, "week")) %>%
+    group_by(COLD_DRINK_CHANNEL, week_date) %>%
+    summarize(
+      total_cases_delivered = sum(DELIVERED_CASES, na.rm = TRUE),
+      total_gallons_delivered = sum(DELIVERED_GALLONS, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  return(weekly_data)
+}
+
+# Define the channels we're interested in
+target_channels <- c("DINING", "GOODS", "EVENT", "PUBLIC SECTOR", "BULK TRADE")
+
+# Aggregate data
+weekly_channel_data <- aggregate_by_channel_weekly(transaction_data, target_channels)
+
+# Function to run ARIMA models for a specific channel with robust plotting
+run_arima_for_channel <- function(data, channel_name) {
+  # Filter for the specific channel
+  channel_data <- data %>%
+    filter(COLD_DRINK_CHANNEL == channel_name) %>%
+    arrange(week_date)
+  
+  # Check if there's enough data
+  if(nrow(channel_data) < 10) {
+    cat("Not enough data for", channel_name, "\n")
+    return(NULL)
+  }
+  
+  # Create time series for cases
+  cases_ts <- ts(channel_data$total_cases_delivered, 
+                frequency = 52)  # Assuming weekly data with 52 weeks per year
+  
+  # Create time series for gallons
+  gallons_ts <- ts(channel_data$total_gallons_delivered, 
+                  frequency = 52)
+  
+  # Run auto.arima for cases
+  cases_arima <- auto.arima(cases_ts)
+  
+  # Run auto.arima for gallons
+  gallons_arima <- auto.arima(gallons_ts)
+  
+  # Generate forecasts (for next 12 weeks)
+  cases_forecast <- forecast(cases_arima, h = 12)
+  gallons_forecast <- forecast(gallons_arima, h = 12)
+  
+  # Create plot objects without plotting them immediately
+  p1 <- NULL
+  p2 <- NULL
+  
+  tryCatch({
+    p1 <- autoplot(cases_forecast) + 
+      ggtitle(paste(channel_name, "- Total Cases Delivered Forecast")) +
+      xlab("Weeks") + ylab("Cases")
+    
+    p2 <- autoplot(gallons_forecast) + 
+      ggtitle(paste(channel_name, "- Total Gallons Delivered Forecast")) +
+      xlab("Weeks") + ylab("Gallons")
+  }, error = function(e) {
+    cat("Error creating plots for", channel_name, ":", e$message, "\n")
+  })
+  
+  # Return results as a list
+  return(list(
+    channel = channel_name,
+    cases_model = cases_arima,
+    gallons_model = gallons_arima,
+    cases_forecast = cases_forecast,
+    gallons_forecast = gallons_forecast,
+    cases_plot = p1,
+    gallons_plot = p2
+  ))
+}
+
+# Run ARIMA models for each channel and store results
+arima_results <- list()
+for(channel in target_channels) {
+  arima_results[[channel]] <- run_arima_for_channel(weekly_channel_data, channel)
+}
+
+# Function to print summary of ARIMA models with error handling for plots
+summarize_arima_results <- function(results_list) {
+  for(channel_name in names(results_list)) {
+    result <- results_list[[channel_name]]
+    if(!is.null(result)) {
+      cat("\n=== Summary for", channel_name, "===\n")
+      
+      cat("\nCases ARIMA Model:\n")
+      print(summary(result$cases_model))
+      
+      cat("\nGallons ARIMA Model:\n")
+      print(summary(result$gallons_model))
+      
+      # Display the plots if they were created successfully
+      if(!is.null(result$cases_plot)) {
+        tryCatch({
+          print(result$cases_plot)
+        }, error = function(e) {
+          cat("Could not display cases plot:", e$message, "\n")
+        })
+      }
+      
+      if(!is.null(result$gallons_plot)) {
+        tryCatch({
+          print(result$gallons_plot)
+        }, error = function(e) {
+          cat("Could not display gallons plot:", e$message, "\n")
+        })
+      }
+    }
+  }
+}
+
+# Print summaries
+summarize_arima_results(arima_results)
+
+```
+
+In the end, cases delivered to the goods and bulk trade cold drink channels had the cleanest upward growth. This may not be too insightful due to the size of customers in both channels. For example, there probably isn't another player in the bulk trade channel that Swire can sell to due to high barrier to entry for competitors.
+
+### 3.4 Demand Variation between all stores
+
+Next, we did some analysis using another growth calculation method.
+
+To measure demand growth patterns across our customer base (January 2023 - December 2024):
+
+1. **Data Preparation:** Combined monthly case and gallon deliveries for each customer into total monthly volumes.
+
+2. **Eligibility:** Required ≥6 months with positive orders for reliable analysis. Customers with <6 ordering months were classified as having no growth potential (6,026 customers).
+
+3. **Growth Calculation:**
+   - Split each qualifying customer's order history into two equal time periods
+   - For odd numbers of months, divided the middle month equally between periods
+   - Calculated growth rate as: (Second Period Total - First Period Total) / First Period Total
+
+4. **Classification:** Customers with growth rates exceeding the average positive growth rate were categorized as high growth potential (HIGH_GROW_POT = 1), while all others received a standard classification (HIGH_GROW_POT = 0).
+
+
+```{r}
+# Initialize new columns in the dataset
+full_data_customer$NUM_POSITIVE_SUMS <- 0
+full_data_customer$QTD_DLV_FIRST_HALF <- 0
+full_data_customer$QTD_DLV_SECOND_HALF <- 0
+full_data_customer$DEMAND_VARIATION <- NA  # Initialize as NA
+
+# Process each customer individually
+for (i in 1:nrow(full_data_customer)) {
+  # Create a vector of positive sums while maintaining the chronological order
+  POSITIVE_SUMS <- c()
+  
+  # Iterate over the 24 months in the correct sequence
+  for (j in 1:24) {
+    # Create column names
+    year <- 2023 + (j - 1) %/% 12
+    month <- (j - 1) %% 12 + 1
+    
+    CA_COL <- paste0("QTD_DLV_CA_", sprintf("%04d", year), "_", sprintf("%02d", month))
+    GAL_COL <- paste0("QTD_DLV_GAL_", sprintf("%04d", year), "_", sprintf("%02d", month))
+    
+    # Check if columns exist in the dataset
+    if (CA_COL %in% names(full_data_customer) && GAL_COL %in% names(full_data_customer)) {
+      CA_VALUE <- full_data_customer[[CA_COL]][i]
+      GAL_VALUE <- full_data_customer[[GAL_COL]][i]
+      
+      # Replace NA with 0
+      CA_VALUE <- ifelse(is.na(CA_VALUE), 0, CA_VALUE)
+      GAL_VALUE <- ifelse(is.na(GAL_VALUE), 0, GAL_VALUE)
+      
+      # Sum values for the month
+      SUM_VALUE <- CA_VALUE + GAL_VALUE
+      
+      # Add to the list if positive
+      if (SUM_VALUE > 0) {
+        POSITIVE_SUMS <- c(POSITIVE_SUMS, SUM_VALUE)
+      }
+    }
+  }
+  
+  # Total number of positive operations
+  num_operations <- length(POSITIVE_SUMS)
+  full_data_customer$NUM_POSITIVE_SUMS[i] <- num_operations
+  
+  # If fewer than 6 positive sums, set values accordingly and continue
+  if (num_operations < 6) {
+    full_data_customer$QTD_DLV_FIRST_HALF[i] <- 0
+    full_data_customer$QTD_DLV_SECOND_HALF[i] <- 0
+    full_data_customer$DEMAND_VARIATION[i] <- NA
+    next
+  }
+  
+  # Initialize the two halves
+  QTD_DLV_FIRST_HALF <- 0
+  QTD_DLV_SECOND_HALF <- 0
+  
+  # Split the operations into two halves
+  if (num_operations %% 2 == 0) {
+    # If even number of operations
+    mid_point <- num_operations / 2
+    QTD_DLV_FIRST_HALF <- sum(POSITIVE_SUMS[1:mid_point])
+    QTD_DLV_SECOND_HALF <- sum(POSITIVE_SUMS[(mid_point + 1):num_operations])
+  } else {
+    # If odd number of operations
+    mid_point <- (num_operations + 1) %/% 2
+    
+    # Split the middle value between both halves
+    first_part <- if(mid_point > 1) POSITIVE_SUMS[1:(mid_point - 1)] else numeric(0)
+    central_value <- POSITIVE_SUMS[mid_point] / 2
+    second_part <- if(mid_point < num_operations) POSITIVE_SUMS[(mid_point + 1):num_operations] else numeric(0)
+    
+    QTD_DLV_FIRST_HALF <- sum(c(first_part, central_value))
+    QTD_DLV_SECOND_HALF <- sum(c(central_value, second_part))
+  }
+  
+  # Assign values to the dataset
+  full_data_customer$QTD_DLV_FIRST_HALF[i] <- QTD_DLV_FIRST_HALF
+  full_data_customer$QTD_DLV_SECOND_HALF[i] <- QTD_DLV_SECOND_HALF
+  
+  # Calculate demand variation
+  if (QTD_DLV_FIRST_HALF > 0) {  # Avoid division by zero
+    DEMAND_VARIATION_VALUE <- (QTD_DLV_SECOND_HALF - QTD_DLV_FIRST_HALF) / QTD_DLV_FIRST_HALF
+    full_data_customer$DEMAND_VARIATION[i] <- DEMAND_VARIATION_VALUE
+  } else {
+    full_data_customer$DEMAND_VARIATION[i] <- NA
+  }
+}
+
+# Create the HIGH_GROW_POT column
+full_data_customer$HIGH_GROW_POT <- 0  # Initialize all values to 0
+
+# Calculate the mean of DEMAND_VARIATION for positive values only
+positive_variations <- full_data_customer$DEMAND_VARIATION[full_data_customer$DEMAND_VARIATION > 0]
+if (length(positive_variations) > 0) {
+  mean_value <- mean(positive_variations, na.rm = TRUE)
+  
+  # Display the calculated mean
+  cat("Calculated mean of positive DEMAND_VARIATION: ", mean_value, "\n")
+  
+  # Assign 1 for customers with DEMAND_VARIATION greater than the mean
+  full_data_customer$HIGH_GROW_POT <- ifelse(!is.na(full_data_customer$DEMAND_VARIATION) & 
+                                            full_data_customer$DEMAND_VARIATION > mean_value, 
+                                            1, 
+                                            full_data_customer$HIGH_GROW_POT)
+} else {
+  cat("No positive DEMAND_VARIATION values found\n")
+}
+```
+```{r,results=FALSE, echo=FALSE}
+ sum(is.na(full_data_customer$DEMAND_VARIATION))
+```
+
+Considering all customers, there was an average demand growth variation of 28%. However, 6,026 customers were excluded from the analysis as their growth could not be calculated due to having fewer than 6 periods of orders. For these customers, it was assumed that they have no growth potential.
+
+```{r, echo=FALSE, results=FALSE}
+# CHECK CODE:
+# Filter the specific customer
+customer_id <- 600076539 #600079420 (not eligible)
+customer_data <- full_data_customer[full_data_customer$CUSTOMER_NUMBER == customer_id, ]
+
+# Create a vector of positive sums while maintaining the chronological order
+POSITIVE_SUMS <- c()
+COLUMN_NAMES <- c()  # Vector to store the column names used
+
+# Iterate over the 24 months in the correct sequence
+for (j in 1:24) {
+  # Create column names
+  CA_COL <- paste0("QTD_DLV_CA_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+  GAL_COL <- paste0("QTD_DLV_GAL_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+
+  # Check if columns exist in the dataset
+  if (CA_COL %in% names(full_data_customer) && GAL_COL %in% names(full_data_customer)) {
+    CA_VALUE <- customer_data[[CA_COL]]
+    GAL_VALUE <- customer_data[[GAL_COL]]
+
+    # Replace NA with 0
+    CA_VALUE <- ifelse(is.na(CA_VALUE), 0, CA_VALUE)
+    GAL_VALUE <- ifelse(is.na(GAL_VALUE), 0, GAL_VALUE)
+
+    # Sum values for the month
+    SUM_VALUE <- CA_VALUE + GAL_VALUE
+
+    # Add to the list if positive, maintaining the natural order
+    if (SUM_VALUE > 0) {
+      POSITIVE_SUMS <- c(POSITIVE_SUMS, SUM_VALUE)
+      COLUMN_NAMES <- c(COLUMN_NAMES, paste(CA_COL, "+", GAL_COL))  # Save column names used
+    }
+  }
+}
+
+# Total number of positive operations
+num_operations <- length(POSITIVE_SUMS)
+
+# Initialize the two halves
+FIRST_HALF <- c()
+SECOND_HALF <- c()
+FIRST_HALF_NAMES <- c()
+SECOND_HALF_NAMES <- c()
+
+# If the number of operations is even
+if (num_operations %% 2 == 0) {
+  # If even, split into two equal halves
+  mid_point <- num_operations / 2
+  FIRST_HALF <- POSITIVE_SUMS[1:mid_point]
+  SECOND_HALF <- POSITIVE_SUMS[(mid_point + 1):num_operations]
+  FIRST_HALF_NAMES <- COLUMN_NAMES[1:mid_point]
+  SECOND_HALF_NAMES <- COLUMN_NAMES[(mid_point + 1):num_operations]
+} else {
+  # If odd, correctly split the central sum
+  mid_point <- (num_operations + 1) %/% 2
+  
+  # First sums go to FIRST_HALF
+  FIRST_HALF <- POSITIVE_SUMS[1:(mid_point - 1)]
+  FIRST_HALF_NAMES <- COLUMN_NAMES[1:(mid_point - 1)]
+  
+  # The central sum is divided between the two halves
+  central_value <- POSITIVE_SUMS[mid_point] / 2
+  FIRST_HALF <- c(FIRST_HALF, central_value)
+  SECOND_HALF <- c(central_value, POSITIVE_SUMS[(mid_point + 1):num_operations])
+  
+  # Adjust names correctly for the split central value
+  FIRST_HALF_NAMES <- c(FIRST_HALF_NAMES, COLUMN_NAMES[mid_point])
+  SECOND_HALF_NAMES <- c(COLUMN_NAMES[mid_point], COLUMN_NAMES[(mid_point + 1):num_operations])
+}
+
+# Display values correctly along with the columns used
+cat("\n--- Values that make up FIRST_HALF ---\n")
+for (i in 1:length(FIRST_HALF)) {
+  cat(FIRST_HALF_NAMES[i], " = ", FIRST_HALF[i], "\n")
+}
+
+cat("\n--- Values that make up SECOND_HALF ---\n")
+for (i in 1:length(SECOND_HALF)) {
+  cat(SECOND_HALF_NAMES[i], " = ", SECOND_HALF[i], "\n")
+}
+
+# Display the sum of the two halves
+cat("\nSum of FIRST_HALF:", sum(FIRST_HALF))
+cat("\nSum of SECOND_HALF:", sum(SECOND_HALF))
+
+# Calculate percentage change between FIRST_HALF and SECOND_HALF
+if (sum(FIRST_HALF) == 0) {
+  cat("\nPercentage Change: 0 (because FIRST_HALF is 0)\n")
+} else {
+  percentage_change <- (sum(SECOND_HALF) - sum(FIRST_HALF)) / sum(FIRST_HALF) * 100
+  cat("\nPercentage Change: ", round(percentage_change, 2), "%\n")
+}
+
+# Display the number of positive operations
+cat("\nNumber of positive operations: ", num_operations, "\n")
+
+```
+
+```{r}
+# Group and calculate the percentage of customers with HIGH_GROW_POT = 1 and 0 by LFO
+summary_high_growth <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    high_growth = sum(HIGH_GROW_POT == 1, na.rm = TRUE),
+    low_growth = sum(HIGH_GROW_POT == 0, na.rm = TRUE),
+    total_customers = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_high_growth = high_growth / total_customers * 100,
+    pct_low_growth = low_growth / total_customers * 100
+  )
+
+# Transform data into long format for percentages
+summary_high_growth_long <- summary_high_growth %>%
+  pivot_longer(
+    cols = starts_with("pct_"),
+    names_to = "growth_type",
+    values_to = "percentage"
+  ) %>%
+  mutate(
+    growth_type = factor(growth_type, 
+                         levels = c("pct_low_growth", "pct_high_growth"),  # Invertendo a ordem
+                         labels = c("Low Growth Potential", "High Growth Potential"))
+  )
+
+# Ensure LFO is a factor
+summary_high_growth_long$LOCAL_FOUNT_ONLY <- factor(summary_high_growth_long$LOCAL_FOUNT_ONLY, levels = c("0", "1"))
+
+# Plot for percentages with the legend on the side
+ggplot(summary_high_growth_long, aes(x = LOCAL_FOUNT_ONLY, y = percentage, fill = growth_type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(percentage, suffix = "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  labs(title = "Percentage of Customers Classified as Low or High Growth Potential") +
+  scale_fill_manual(values = c("Low Growth Potential" = "#FF6347", "High Growth Potential" = "#40E0D0")) +  # Invertendo cores
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",  # Position legend on the right side
+    legend.box = "vertical",  # Ensure vertical arrangement for the legend
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only")) +
+  guides(fill = guide_legend(title = "Growth Potential"))  # Add a legend title
+
+# Group and calculate the number of customers with HIGH_GROW_POT = 1 and 0 by LFO
+summary_high_growth <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    low_growth = sum(HIGH_GROW_POT == 0, na.rm = TRUE),  # Invertendo a ordem das colunas
+    high_growth = sum(HIGH_GROW_POT == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Display the summary with the count of customers
+#summary_high_growth
+
+
+```
+
+Approximately 9% of customers (123) identified as local market partners who purchase fountain-only products show high growth potential according to the established criteria. For other customers, about 12% (3450) are classified as having high growth potential.
+
+We acknowledge that customers with high volumes are somewhat penalized by this criterion, as it is challenging for them to achieve significant demand growth. However, their substantial volume already positions them as strategic partners, essential for close monitoring and receiving deliveries via red trucks. For these customers, the distribution cost is lower, which makes more competitive pricing feasible, ensuring the sustainability of the partnership.
+
+### 3.5 Demand Variation by Cold Drink Channel
+
+First, we will recall the weight of each cold drink channel in the total consumption of cases and gallons.
+
+```{r}
+# Define the custom color palette for COLD_DRINK_CHANNEL
+custom_palette <- c(
+  "#F4EBE8", "#8ED081", "#ABD2FA", "#A7ADC6", "#B33951",  
+  "#FFD700", "#FF6347", "#20B2AA", "#87CEEB", "#D3D3D3", "#FF8C00",   
+  "#32CD32", "#6A5ACD", "#FF1493", "#40E0D0", "#FF4500", "#D2691E"
+)
+
+# Summarize data by COLD_DRINK_CHANNEL, summing the quantities of gallons and cases
+data_summary <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Volume = sum(QTD_DLV_GAL_2023, na.rm = TRUE) + sum(QTD_DLV_GAL_2024, na.rm = TRUE) + 
+                   sum(QTD_DLV_CA_2023, na.rm = TRUE) + sum(QTD_DLV_CA_2024, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Percentage = round(Total_Volume / sum(Total_Volume) * 100, 1))  # Calculate the percentage
+
+# Create a horizontal bar chart for the percentage of total volume by cold drink channel
+ggplot(data_summary, aes(x = Percentage, y = reorder(COLD_DRINK_CHANNEL, Percentage), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.7) +  
+  geom_text(aes(label = paste(Percentage, "%")), position = position_stack(vjust = 0.5), 
+            hjust = -0.01, color = "black", size = 3.2) +
+  labs(title = "Percentage of Total Volume (Gallons and Cases) by Cold Drink Channel",
+       x = "Percentage of Total Volume", 
+       y = NULL) +  
+  scale_x_continuous(labels = function(x) paste0(x, "%")) +  # Format x-axis as percentages
+  scale_fill_manual(values = custom_palette) +  # Apply the custom color palette
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),  
+    axis.text.y = element_text(size = 10),  
+    axis.title.x = element_blank(),  # Remove the x-axis title
+    axis.text.x = element_text(size = 10),  # Add x-axis text size
+    legend.position = "none",  # Remove the legend
+    panel.grid.major.x = element_line(color = "grey90"),  # Add only vertical grid lines
+    panel.grid.major.y = element_blank(),  # Remove horizontal grid lines
+    panel.grid.minor = element_blank()  # Remove minor grid lines
+  )
+
+```
+
+We decided to consider each customer's growth potential within their segment. Following the same criteria as before, we classify as high potential only those customers whose demand variation exceeds the average of their respective segments.  
+Below is the calculated demand variation for each Cold Drink Channel during the period.
+
+```{r}
+# Define the custom color palette for COLD_DRINK_CHANNEL with unique colors
+custom_palette <- c(
+  "#F4EBE8", "#8ED081", "#ABD2FA", "#A7ADC6", "#B33951",  
+  "#FFD700", "#FF6347", "#20B2AA", "#87CEEB", "#D3D3D3", "#FF8C00",   
+  "#32CD32", "#6A5ACD", "#FF1493", "#40E0D0", "#FF4500", "#D2691E"
+)
+
+# Aggregate the data to calculate the mean DEMAND_VARIATION by COLD_DRINK_CHANNEL
+summary_growth_channel <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(CHANNEL_VAR = mean(DEMAND_VARIATION, na.rm = TRUE))  # Mean DEMAND_VARIATION per channel
+
+# Create the horizontal bar chart for CHANNEL_VAR by COLD_DRINK_CHANNEL
+ggplot(summary_growth_channel, aes(x = CHANNEL_VAR, y = reorder(COLD_DRINK_CHANNEL, CHANNEL_VAR), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.6) +
+  geom_text(aes(label = paste0(round(CHANNEL_VAR * 100, 1), "%")),  # Round labels to 1 decimal place
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Average Demand Variation by Cold Drink Channel",
+       x = "Percentage Variation (%)", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::label_percent(accuracy = 0.1), expand = expansion(c(0, 0.05))) +  # Limit to 1 decimal place
+  scale_fill_manual(values = custom_palette[1:length(unique(full_data_customer$COLD_DRINK_CHANNEL))]) +  # Use custom colors
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 10),  
+    axis.title.x = element_text(size = 10),  
+    legend.position = "none",  # Remove the legend
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_line(color = "gray", size = 0.5)  # Add gray vertical lines
+  )
+
+```
+
+
+ALTERNATIVE VISUALIZATION (USING FACET WRAP)
+```{r}
+# Manually map each COLD_DRINK_CHANNEL to a color
+channel_colors <- c(
+  "DINING" = "#A7ADC6",
+  "PUBLIC SECTOR" = "#FF6347",
+  "EVENT" = "#B33951",
+  "WORKPLACE" = "#ABD2FA",
+  "ACCOMMODATION" = "#D3D3D3",
+  "GOODS" = "#FFD700",
+  "BULK TRADE" = "#8ED081",
+  "WELLNESS" = "#20B2AA",
+  "CONVENTIONAL" = "#87CEEB"
+)
+
+# Summarize total volume percentage by COLD_DRINK_CHANNEL
+data_summary <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Volume = sum(QTD_DLV_GAL_2023, na.rm = TRUE) + sum(QTD_DLV_GAL_2024, na.rm = TRUE) + 
+                   sum(QTD_DLV_CA_2023, na.rm = TRUE) + sum(QTD_DLV_CA_2024, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Value = round(Total_Volume / sum(Total_Volume) * 100, 1), 
+         Metric = "Total Volume (%)")  # Define metric label
+
+# Aggregate the data to calculate the mean DEMAND_VARIATION by COLD_DRINK_CHANNEL
+summary_growth_channel <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(Value = round(mean(DEMAND_VARIATION, na.rm = TRUE) * 100, 1), .groups = 'drop') %>%
+  mutate(Metric = "Demand Variation (%)")  # Define metric label
+
+# Combine data for facet wrap
+data_combined <- bind_rows(data_summary, summary_growth_channel)
+
+# Order COLD_DRINK_CHANNEL by Total Volume (descending)
+order_levels <- data_summary %>%
+  arrange(desc(Total_Volume)) %>%
+  pull(COLD_DRINK_CHANNEL)
+
+# Apply the ordering to the dataset
+data_combined <- data_combined %>%
+  mutate(COLD_DRINK_CHANNEL = factor(COLD_DRINK_CHANNEL, levels = order_levels))
+
+# Create the facet wrap plot
+ggplot(data_combined, aes(x = Value, y = COLD_DRINK_CHANNEL, fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.7) +  
+  geom_text(aes(label = paste0(Value, "%")),
+            position = position_stack(vjust = 0.5), hjust = 0.0, color = "black", size = 3.2) +
+  facet_wrap(~Metric, ncol = 1, scales = "fixed") +  # Shared X scale
+  labs(title = "Cold Drink Channel Analysis",
+       x = NULL, 
+       y = NULL) +  
+  scale_x_continuous(labels = function(x) paste0(x, "%"), expand = expansion(mult = c(0, 0.05))) +  # Format x-axis as percentages
+  scale_fill_manual(values = channel_colors) +  # Apply custom colors
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),  
+    axis.text.y = element_text(size = 10),  
+    legend.position = "none",  # Remove legend
+    panel.grid.major.y = element_blank(),  # Remove horizontal grid lines
+    panel.grid.major.x = element_line(color = "grey90"),  # Add only vertical grid lines
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 11, face = "bold"),  # Facet labels style
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    plot.margin = unit(c(10, 10, 10, 10), "pt"),  # Corrected margin usage
+    axis.title.x = element_blank()  # Remove X axis title
+  ) +
+  theme(
+    axis.text.x = element_blank(),  # Hide X axis labels on the first plot
+    axis.ticks.x = element_blank(),  # Hide X axis ticks on the first plot
+    strip.text.y = element_blank()  # Hide facet label for the first plot
+  )
+
+```
+Dining and bulk trade are the most important channels, with customers increasing their demand by 2.1% and 5.6%, respectively, on average.
+
+Wellness experienced the highest variation at almost 10%, but it accounts for only 3.2% of the total volume sold. Goods had the second-highest variation, at 9%, and represents 10% of the total volume.
+
+
+```{r}
+# Calculate the mean DEMAND_VARIATION for each COLD_DRINK_CHANNEL
+channel_means <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(MEAN_DEMAND_VARIATION = mean(DEMAND_VARIATION, na.rm = TRUE))
+
+# Merge the mean values with the full_data_customer
+full_data_customer <- full_data_customer %>%
+  left_join(channel_means, by = "COLD_DRINK_CHANNEL")
+
+# Create the CHANNEL_GROWTH_POT column based on the comparison to the channel's mean DEMAND_VARIATION
+full_data_customer$CHANNEL_GROWTH_POT <- ifelse(
+  is.na(full_data_customer$DEMAND_VARIATION), 0,  # Set CHANNEL_GROWTH_POT to 0 if DEMAND_VARIATION is NA
+  ifelse(full_data_customer$DEMAND_VARIATION > full_data_customer$MEAN_DEMAND_VARIATION, 1, 0)  # Otherwise compare to the mean
+)
+
+# Optionally, remove the MEAN_DEMAND_VARIATION column if you no longer need it
+full_data_customer <- full_data_customer %>% dplyr::select(-MEAN_DEMAND_VARIATION)
+
+
+```
+
+```{r}
+# Calculate the percentage of customers with CHANNEL_GROWTH_POT == 1 by COLD_DRINK_CHANNEL
+summary_growth_channel_customers <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    pct_high_growth = mean(CHANNEL_GROWTH_POT == 1, na.rm = TRUE) * 100  # Calculate percentage of high growth customers
+  )
+
+# Create the horizontal bar chart for the percentage of customers with CHANNEL_GROWTH_POT == 1 by COLD_DRINK_CHANNEL
+ggplot(summary_growth_channel_customers, aes(x = pct_high_growth, y = reorder(COLD_DRINK_CHANNEL, pct_high_growth), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.6) +
+  geom_text(aes(label = paste0(round(pct_high_growth, 1), "%")),  # Round labels to 1 decimal place
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Customers with High Growth Potential by Cold Drink Channel",
+       x = "Percentage of Customers (%)", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::label_number(accuracy = 1), expand = expansion(c(0, 0.05))) +  # Correct scale for percentages
+  scale_fill_manual(values = custom_palette[1:length(unique(full_data_customer$COLD_DRINK_CHANNEL))]) +  # Use custom colors
+  theme_minimal() +  
+  theme(
+    plot.title = element_text(size = 11, face = "bold"),
+    axis.text.y = element_text(size = 10),  
+    axis.title.x = element_text(size = 10),  
+    legend.position = "none",  # Remove the legend
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_line(color = "gray", size = 0.5)  # Add gray vertical lines
+  )
+
+```
+
+
+## 4.0 Machine learning predictions on the target variable
+
+In this section, we start implementing some machine learning to make predictions. Again, one of Swire's goals is to be able to predict whether a customer will (or has the potential) to reach the threshold required to be a Red Truck customer.
+
+As we have discussed earlier, the data is very limited in a sense that we only have two years worth of transactional data. That's not really enough to predict growth potentials, especially in a long term.
+
+However, we will see if we can implement machine learning, specifically Random Forests and XGBoost to determine if it's possible to predict whether a customer will reach the red truck status based on their previous year's order numbers (in our case, 2023 will be the previous year, and 2024 the prediction year). Although, in our analysis we have discussed different volume threshold, in this prediction we will stick to the pre-determined 400 gallon threshold for the red truck qualification.
+
+``` {r}
+
+# read in cleaned code that will be used for a few parts of the analysis
+customer_totals_wide <- read.csv( "customer_totals_wide_joonas.csv" )
+
+```
+
+### 4.1 First model with all customers (Random Forest)
+
+Because the wide dataset that we're using here includes order numbers for both years, we want to exclude all order numbers for the year that we're trying to predict
+
+``` {r}
+# remove all variables that cannot be used to predict 2024 volume
+# we're keeping all volume variables ending in "_previous", because we want to predict based on those
+customer_totals_modeling <- customer_totals_wide %>%
+  dplyr::select(-c(
+    total_orders, 
+    avg_gallons_per_order, 
+    avg_cost_per_order,
+    days_since_onboarding, 
+    total_volume,
+    year, 
+    ordered_cases, 
+    avg_total_gallons_per_order,
+    avg_cost_per_gallon, 
+    days_since_first_delivery,  
+    yoy_total_gallons_ordered, 
+    ordered_gallons, 
+    ordered_cases_cost,
+    total_gallons_ordered,  
+    ordered_gallons_cost,
+    yoy_total_orders, 
+    avg_cases_per_order, 
+    total_delivery_cost,
+    volume_bucket,  
+    yoy_ordered_cases,
+    yoy_ordered_gallons,
+    zip_code, 
+    latitude, 
+    longitude,
+    city,
+    county,
+    sub_trade_channel,
+    primary_group_number,
+    customer_number
+  )) %>%
+  mutate(target = red_truck_flag) %>% # rename red_truck_flag (which we're predicting) to target
+  dplyr::select(-red_truck_flag)
+
+
+```
+
+Here, we just do a few basic checks, such as the target variable proportions, and how many customers have no orders on record.
+
+``` {r}
+# checks the target variable proportions
+prop.table(table(customer_totals_modeling$target))
+
+# check the number of customer with no orders on record
+sum(customer_totals_modeling$days_since_first_delivery_previous == 0)
+
+# checks the distribution of the target variable among those with no orders in 2023
+customer_totals_modeling %>%
+  dplyr::filter(days_since_first_delivery_previous == 0) %>%
+  dplyr::count(target)
+
+
+```
+We determined that first we will only focus on the customers with some orders on record. 
+
+``` {r}
+customer_totals_modeling <- customer_totals_modeling %>%
+  filter(days_since_first_delivery_previous != 0)
+
+```
+
+
+``` {r, warning=FALSE}
+library(caret)
+library(randomForest)
+
+customer_totals_modeling$target <- factor(customer_totals_modeling$target, labels = c("No", "Yes"))
+
+
+set.seed(111)
+split_1 <- createDataPartition(customer_totals_modeling$target, p=0.75, list=FALSE)
+train_1 <- customer_totals_modeling[split_1, ]
+test_1 <- customer_totals_modeling[-split_1, ]
+
+control_1 <- trainControl(
+  method = "cv",
+  number = 3,
+  summaryFunction = twoClassSummary,
+  classProbs = TRUE
+)
+
+grid_1 <- expand.grid(
+  mtry = c(2,4,6,8)
+)
+
+model_1 <- train(
+  target ~ .,
+  data = train_1,
+  method = "rf",
+  metric = "Spec",
+  tuneGrid = grid_1,
+  trControl = control_1
+)
+
+model_1
+```
+The model training is showing some solid performance in predicting both classes.
+
+``` {r}
+
+preds_1 <- predict(model_1, newdata = test_1[, -ncol(test_1)])
+confusionMatrix(preds_1, test_1$target, positive = "Yes")
+
+
+```
+As we can see in the confusion matrix, the model did a pretty good job in predicting both classes. 87.6% precision on the positive class ("Yes" red truck) and 94.8% on the negative ("No" red truck) 
+
+This is not the whole story though.
+
+
+``` {r}
+
+print(varImp(model_1))
+
+```
+
+As we can see here in the variable importance, the most important variables were previous year's red truck status, along with the order volumes. Unfortunately, we think that this mostly applies to records where the customer had a red truck status last year.
+
+If we recall, what we're really trying to predict here is who has the potential to reach a red truck status even if they're currently not.
+
+We'll join the predicted values to the test data to see how the model really performed on predicting what we're after here.
+
+``` {r}
+
+test_1_with_preds <- cbind(test_1, Predicted = preds_1)
+test_1_with_preds$Correct <- test_1_with_preds$target == test_1_with_preds$Predicted
+
+```
+
+``` {r}
+
+test_1_with_preds %>% 
+  dplyr::filter(Correct == TRUE, target == "Yes") %>%
+  dplyr::count(red_truck_flag_previous)
+
+
+```
+
+Here we looked at how many times we correctly predicted whether a customer would become a red truck after being a white truck in the previous yer. As we can see, the model only predicted 30 customers. Now, predicting those 30 customers could have a big impact on Swire's business outlook, but we don't think it fully solves the problem that we're tying to solve.
+
+
+### 4.2 Second model with customers less than 400 gallons per year
+
+Although, in the previous model we could see that the model only predicted 30 customers who previously had less than 400 gallons for the year, we will try to build a model that solely focuses on those customers.
+
+
+``` {r}
+
+customer_totals_modeling_2 <- customer_totals_wide %>%
+  dplyr::select(-c(
+    total_orders, 
+    avg_gallons_per_order, 
+    avg_cost_per_order,
+    days_since_onboarding, 
+    total_volume,
+    year, 
+    ordered_cases, 
+    avg_total_gallons_per_order,
+    avg_cost_per_gallon, 
+    days_since_first_delivery,  
+    yoy_total_gallons_ordered, 
+    ordered_gallons, 
+    ordered_cases_cost,
+    total_gallons_ordered,  
+    ordered_gallons_cost,
+    yoy_total_orders, 
+    avg_cases_per_order, 
+    total_delivery_cost,
+    volume_bucket,  
+    yoy_ordered_cases,
+    yoy_ordered_gallons,
+    zip_code, 
+    latitude, 
+    longitude,
+    city,
+    county,
+    sub_trade_channel,
+    primary_group_number,
+    customer_number
+  )) %>%
+  dplyr::mutate(target = red_truck_flag) %>% # rename red_truck_flag (which we're predicting) to target
+  dplyr::select(-red_truck_flag)
+
+
+```
+
+
+Here's just quick check to see if there are differences between the two classes for the target variable for the filtered customers who didn't have red truck status in 2023. 
+
+``` {r}
+customer_totals_modeling_2 %>%
+  dplyr::filter(red_truck_flag_previous == 0) %>%
+  dplyr::group_by(target) %>%
+  dplyr::summarise(across(where(is.numeric), mean, na.rm=TRUE))
+
+
+```
+
+Here's the actual filtering where we filter the dataset down to only the customers that did not have a red truck status (more than 400 gals) in 2023.
+
+``` {r}
+customer_totals_modeling_2 <- customer_totals_modeling_2 %>%
+  filter(red_truck_flag_previous == 0)
+
+nrow(customer_totals_modeling_2)
+table(customer_totals_modeling_2$target)
+```
+Here we run a simple logistic regression again for variable selection. We don't want to run the final XGBoost model on all variables to try to avoid overfitting.
+
+```{r}
+
+log_model <- glm(target ~ ., data = customer_totals_modeling_2, family = binomial())
+
+summary(log_model)
+
+```
+Here we select all variables that the logistic model determine statistically significant.
+
+``` {r}
+
+customer_totals_modeling_2 <- customer_totals_modeling_2 %>%
+  dplyr::select(frequent_order_type, 
+                cold_drink_channel, 
+                trade_channel, 
+                local_market_partner, 
+                lfo_flag, 
+                total_orders_previous, 
+                ordered_cases_previous, 
+                ordered_gallons_previous,
+                ordered_cases_cost_previous, 
+                avg_cost_per_order_previous, 
+                avg_cost_per_gallon_previous,
+                days_since_onboarding_previous,
+                days_since_first_delivery_previous, 
+                UNEMP_POP, 
+                chain_member,
+                target)
+
+
+```
+
+Here we train the model. Since the classes are very imbalanced, we add some weighing to the model using scale_pos_weight. We also use a pretty large parameter grid for tuning to make sure we're getting the best possible results.
+
+``` {r, warning=FALSE, message=FALSE, results = 'hide'}
+
+library(xgboost)
+
+set.seed(123)
+
+# Split the data first
+trainIndex <- createDataPartition(customer_totals_modeling_2$target, p = 0.8, list = FALSE)
+train_data <- customer_totals_modeling_2[trainIndex, ]
+test_data <- customer_totals_modeling_2[-trainIndex, ]
+
+# Create dummy variables from the FULL dataset before transformation
+dummy_vars <- dummyVars("~ .", data = customer_totals_modeling_2[, -ncol(customer_totals_modeling_2)], 
+                        fullRank = TRUE)
+
+# Transform both datasets
+train_data_transformed <- predict(dummy_vars, newdata = train_data)
+test_data_transformed <- predict(dummy_vars, newdata = test_data)
+
+# Ensure test data has all columns from training data
+missing_cols <- setdiff(colnames(train_data_transformed), colnames(test_data_transformed))
+for(col in missing_cols) {
+  test_data_transformed <- cbind(test_data_transformed, rep(0, nrow(test_data_transformed)))
+  colnames(test_data_transformed)[ncol(test_data_transformed)] <- col
+}
+
+# Ensure columns are in the same order
+test_data_transformed <- test_data_transformed[, colnames(train_data_transformed)]
+
+# Prepare target variable
+train_data$target <- make.names(as.factor(train_data$target))
+test_data$target <- make.names(as.factor(test_data$target))
+
+# Calculate class weight for imbalanced data
+scale_pos_weight <- sum(train_data$target == "X0") / sum(train_data$target == "X1")
+
+# Configure training parameters
+train_control <- trainControl(method = "cv", number = 3, verboseIter = TRUE, 
+                             summaryFunction = twoClassSummary, classProbs = TRUE)  
+
+# Define hyperparameter grid
+param_grid <- expand.grid(
+  nrounds = c(100, 500, 1000),
+  max_depth = c(3, 6), 
+  eta = c(0.01, 0.1, 0.5),
+  gamma = c(0, 5), 
+  colsample_bytree = c(0.7, 1), 
+  min_child_weight = 1,  
+  subsample = 1
+)
+
+# Train the model
+xgb_model_caret <- train(
+  x = train_data_transformed,
+  y = factor(train_data$target),
+  method = "xgbTree",
+  trControl = train_control,
+  tuneGrid = param_grid,
+  metric = "Spec",
+  scale_pos_weight = scale_pos_weight
+)
+
+```
+
+
+```{r}
+
+# Check the column names
+train_cols <- colnames(train_data_transformed)
+test_cols <- colnames(test_data_transformed)
+
+# Compare them
+setdiff(train_cols, test_cols)  # Features in train but not in test
+setdiff(test_cols, train_cols)  # Features in test but not in train
+
+xgb_predictions <- predict(xgb_model_caret, newdata = test_data_transformed)
+
+# Convert predictions from factor to numeric (0/1)
+# <- as.numeric(xgb_predictions) - 1
+conf_matrix_2 <- confusionMatrix(xgb_predictions, as.factor(test_data$target))
+
+# Print the performance metrics
+print(conf_matrix_2)
+
+```
+We can see that model was correct in predicting the target class only 50% of the time and was correct on a total of 57 of those predictions. That is only a slightly more than what the previous model did.
+
+
+### 4.3  Machine Learning Coclusions 
+
+**Negative:**
+What we have learned from this machine learning section is that the problem we're trying to solve for Swire is not a prediction problem. At least not with the data currently available to us. The problem that we're trying to solve requires a different approach, and that's what we're trying to explore with other methods such as clustering and other unsupervised learning techniques.
+
+Or the solution to Swire's problem might just simply lie in the EDA, which we will discuss more. 
+
+**Positive:**
+Despite what we discussed above, the model performance, especially on the first model really good. Overall accuracy of around 92%. 87% on the positive class and almost 95% on the negative class. Now, that doesn't directly solve the problem what we're after, but it could be used for something totally differrent: customer incentives, targeted marketing, special offers, etc.
+
+## 5.0 PCA
+
+### 5.1 Data Preparation
+
+Each dataframe has a target variable red_truck_flag 1/0 (1 if 400 gallons or more for the year, 0 if less than 400 gals)
+
+This code block produces:
+- customer_totals_simple: customer yearly volumes, separated by the year (2 rows per customer)
+- customer_totals_yearly: customer yearly volumnes with more columns, separated by the year (2 rows by customer)
+- customer_totals_wide: 1 row per customer. Should be best for modeling
+
+Each dataframe has a target variable red_truck_flag 1/0 (1 if 400 gallons or more for the year, 0 if less than 400 gals)
+
+```{r}
+
+library(tidyverse)
+library(caret)
+library(factoextra)
+library(cluster)
+library(NbClust)
+library(ggplot2)
+library(dendextend)
+library(FactoMineR)
+library(pROC)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(skimr)
+library(janitor)
+library(lubridate)
+library(randomForest)
+
+```
+
+``` {r, warning = FALSE, message = FALSE}
+
+address_mapping <- read_csv("customer_address_and_zip_mapping.csv")
+customer_profile <- read_csv("customer_profile.csv")
+delivery_costs <- read_excel("delivery_cost_data.xlsx")
+transactions <- read_csv("transactional_data.csv")
+
+customer_totals_wide <-read_csv("customer_totals_wide_joonas.csv")
+
+```
+
+```{r}
+# Fill missing values for categorical columns with "Unknown"
+customer_totals_wide <- customer_totals_wide %>%
+  mutate(volume_bucket = ifelse(is.na(volume_bucket), "Unknown", volume_bucket),
+         volume_bucket_previous = ifelse(is.na(volume_bucket_previous), "Unknown", volume_bucket_previous))
+
+# Fill missing red_truck_flag with 0 (assumes missing means below threshold)
+customer_totals_wide <- customer_totals_wide %>%
+  mutate(red_truck_flag = ifelse(is.na(red_truck_flag), 0, red_truck_flag),
+         red_truck_flag_previous = ifelse(is.na(red_truck_flag_previous), 0, red_truck_flag_previous))
+
+# Fill missing previous year values with 0 (assumes no orders in 2023)
+cols_to_fill <- grep("_previous$", colnames(customer_totals_wide), value = TRUE)
+customer_totals_wide[cols_to_fill] <- lapply(customer_totals_wide[cols_to_fill], function(x) ifelse(is.na(x), 0, x))
+
+# Fill missing YoY changes with 0 (assumes no change if missing previous data)
+customer_totals_wide <- customer_totals_wide %>%
+  mutate(across(starts_with("yoy_"), ~ifelse(is.na(.), 0, .)))
+
+# Check if missing values are fixed
+colSums(is.na(customer_totals_wide))
+
+```
+
+
+
+```{r}
+# Ensure all numeric variables are properly selected
+numeric_cols <- sapply(customer_totals_wide, is.numeric)
+customer_scaled <- customer_totals_wide[, numeric_cols]
+
+# Replace infinite values with NA (Only Needs to be Done Once)
+customer_scaled[is.infinite(as.matrix(customer_scaled))] <- NA
+
+# Impute missing values with the median (Handles NA and -Inf)
+customer_scaled <- customer_scaled %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+# Normalize Data (Center & Scale)
+preprocess_params <- preProcess(customer_scaled, method = c("center", "scale"))
+customer_scaled <- predict(preprocess_params, customer_scaled)
+
+# Final Check for NA values
+colSums(is.na(customer_scaled))
+# Convert customer_scaled to a proper dataframe if it's still a list
+customer_scaled <- as.data.frame(customer_scaled)
+
+# Ensure all columns are numeric
+numeric_cols <- sapply(customer_scaled, is.numeric)
+
+# Remove non-numeric columns
+customer_scaled <- customer_scaled[, numeric_cols]
+
+
+```
+
+```{r}
+# Replace Inf or NaN with NA
+customer_scaled$yoy_ordered_cases[is.infinite(customer_scaled$yoy_ordered_cases)] <- NA
+customer_scaled$yoy_ordered_gallons[is.infinite(customer_scaled$yoy_ordered_gallons)] <- NA
+customer_scaled$yoy_total_gallons_ordered[is.infinite(customer_scaled$yoy_total_gallons_ordered)] <- NA
+
+# Replace remaining NAs with 0 (or use median if you prefer)
+customer_scaled$yoy_ordered_cases[is.na(customer_scaled$yoy_ordered_cases)] <- 0
+customer_scaled$yoy_ordered_gallons[is.na(customer_scaled$yoy_ordered_gallons)] <- 0
+customer_scaled$yoy_total_gallons_ordered[is.na(customer_scaled$yoy_total_gallons_ordered)] <- 0
+
+```
+
+
+
+
+### 5.2 PCA Modeling
+
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+# Run PCA on the numerical columns only
+pca_result <- PCA(customer_scaled, graph = FALSE)
+
+# Scree plot to check variance explained by components
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 50))
+
+```
+```{r}
+# Visualize first two principal components (Customers)
+fviz_pca_ind(pca_result,
+             geom = "point",
+             col.ind = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)
+
+```
+
+
+
+
+```{r}
+# Visualize variable contributions
+fviz_pca_var(pca_result,
+             col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+
+```
+
+**1. Scree Plot Analysis**
+The first two principal components (PC1 and PC2) explain 17.5% and 16.4% of the variance, respectively.
+The first four principal components explain a significant proportion of variance (~53.1%), suggesting that reducing dimensionality to 4-5 components might retain a good amount of information.
+
+**2. Individuals PCA Plot**
+The color gradient (cos2 values) shows how well individual customers are represented on PC1 and PC2.
+It looks like a majority of the data points are clustered close to the center, but there are some outliers spread far away.
+This suggests potential clusters in the data, which makes clustering methods (like k-means or hierarchical clustering) a good next step.
+
+**3. Variables PCA Plot**
+Variables like total_gallons_ordered, total_orders, and previous year values seem to contribute strongly to PC1.
+Average cost per gallon and cost-related variables contribute more to PC2.
+Variables that are closer together are highly correlated.
+The high-density region suggests redundancy among some variables, meaning we could remove some without losing too much information.
+
+
+
+### 5.3 Compute Within-Cluster Sum of Squares (WCSS) for Elbow Method
+```{r}
+library(factoextra)
+
+# Compute within-cluster sum of squares (WCSS) for different k values
+set.seed(123)  # Ensuring reproducibility
+wcss <- sapply(1:10, function(k) {
+  kmeans_result <- kmeans(pca_result$ind$coord[, 1:4], centers = k, nstart = 25)
+  kmeans_result$tot.withinss
+})
+
+# Print WCSS values
+wcss
+
+```
+
+
+
+
+```{r}
+library(cluster)
+
+sil_scores <- sapply(2:10, function(k) {
+  kmeans_result <- kmeans(pca_result$ind$coord[, 1:4], centers = k, nstart = 25)
+  silhouette_score <- silhouette(kmeans_result$cluster, dist(pca_result$ind$coord[, 1:4]))
+  mean(silhouette_score[, 3])  # Extract average silhouette width
+})
+
+# Print silhouette scores
+sil_scores
+
+```
+
+The Elbow Method (WCSS values) shows a sharp decrease initially and then a slower decline, suggesting a good number of clusters around 3-5.
+The Silhouette Scores indicate how well clusters are defined. The highest values are for k = 2 and k = 3 (0.3281 and 0.3218), meaning that clustering is most distinct at these points.
+Decision on Number of Clusters (k)
+Based on both methods:
+
+k = 3 seems like a strong candidate since it balances variance explained and silhouette score.
+
+
+### 5.4 K Means Clustering on PCA Data
+```{r}
+set.seed(123)  # For reproducibility
+
+# Perform K-Means clustering on first 4 PCA components
+kmeans_result <- kmeans(pca_result$ind$coord[, 1:4], centers = 3, nstart = 25)
+
+# Add cluster labels to data
+customer_clusters <- customer_totals_wide
+customer_clusters$cluster <- as.factor(kmeans_result$cluster)
+
+# Print cluster sizes
+table(customer_clusters$cluster)
+
+```
+
+```{r}
+cluster_summary <- customer_clusters %>%
+  group_by(cluster) %>%
+  summarise(
+    avg_orders = mean(total_orders, na.rm = TRUE),
+    avg_gallons = mean(total_gallons_ordered, na.rm = TRUE),
+    avg_delivery_cost = mean(total_delivery_cost, na.rm = TRUE),
+    avg_income = mean(MED_HH_INC, na.rm = TRUE),
+    avg_population = mean(TOT_POP, na.rm = TRUE)
+  )
+
+print(cluster_summary)
+
+```
+
+```{r}
+table(customer_clusters$cluster, customer_clusters$trade_channel)
+table(customer_clusters$cluster, customer_clusters$volume_bucket)
+table(customer_clusters$cluster, customer_clusters$state_short)
+
+```
+
+
+**Cluster Sizes (Step 3)**
+Cluster 1: 16,915 customers (majority).
+Cluster 2: 110 customers (very small group).
+Cluster 3: 12,472 customers (second largest).
+
+
+**Key Insights:**
+Cluster 2 has the highest volume customers (Avg. gallons: 34,299, Avg. delivery cost: $26,429), indicating high-value, large-scale buyers.
+Clusters 1 & 3 are similar in volume (464-466 gallons) but differ in income:
+Cluster 1: Lower-income, lower population density
+Cluster 3: Higher-income, more urban customers
+This suggests Cluster 1 might be small-volume buyers in lower-income areas, whereas Cluster 3 has small-volume buyers in wealthier areas.
+
+**Cluster Distributions by Trade Channel (Step 5)**
+Cluster 1 dominates in "Fast Casual Dining" (3,371 customers), "Comprehensive Dining" (2,745), and "Other Dining & Beverage" (1,567).
+Cluster 2 is almost absent from most trade channels, reinforcing that it's an elite, high-volume customer group.
+Cluster 3 has similar patterns to Cluster 1 but with fewer vehicle care and industrial customers.
+
+**Volume Buckets Across Clusters**
+Cluster Small Buyers (<100 gal) Medium Buyers (100-1000 gal) Large Buyers (>1000 gal)
+Cluster 1 has the highest number of small-volume buyers.
+Cluster 2 consists entirely of large-scale buyers.
+Cluster 3 has a similar mix to Cluster 1, but slightly more medium and high-volume buyers.
+
+**Geographic Distribution**
+Cluster 1 is evenly distributed across states.
+Cluster 2 is very small, but customers are mostly from MA (55) and MD (13).
+Cluster 3 is heavily concentrated in MA (8,145) and MD (2,792).
+
+
+## 6.0 Random Forest Model Setup - Train/Test Split
+
+```{r}
+set.seed(123) # For reproducibility
+
+# Splitting the dataset
+train_index <- createDataPartition(customer_clusters$cluster, p = 0.7, list = FALSE)
+
+# Creating train and test datasets
+train_data <- customer_clusters[train_index, ]
+test_data <- customer_clusters[-train_index, ]
+
+```
+
+
+### 6.1 Testing a random forest model
+```{r}
+library(randomForest)
+
+# Convert cluster column to a factor for classification
+train_data$cluster <- as.factor(train_data$cluster)
+test_data$cluster <- as.factor(test_data$cluster)
+
+# Train Random Forest
+rf_model <- randomForest(cluster ~ total_orders + total_gallons_ordered + total_delivery_cost +
+                         avg_cost_per_order + MED_HH_INC + PER_CAP_INC + EMP_POP + TOT_POP,
+                         data = train_data, ntree = 500, mtry = 3, importance = TRUE)
+
+# View model summary
+print(rf_model)
+
+```
+
+
+
+```{r}
+# Make predictions
+pred_rf <- predict(rf_model, test_data)
+
+# Confusion matrix
+conf_matrix <- table(Predicted = pred_rf, Actual = test_data$cluster)
+print(conf_matrix)
+
+# Calculate accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Random Forest Accuracy:", round(accuracy, 4)))
+
+```
+
+
+
+```{r}
+
+randomForest::importance(rf_model)
+randomForest::varImpPlot(rf_model)
+
+```
+
+⃣Cluster Predictions
+Cluster 1: Most customers (majority class) → Very well classified
+Cluster 3: Also well-classified
+Cluster 2: Hardest to classify (19.5% error rate) → Needs improvement but its small amount so disregard
+
+
+What drives cluster classification?
+Feature Importance
+EMP_POP (Employment Population) is Most influential predictor
+PER_CAP_INC (Per Capita Income) is 2nd most important
+MED_HH_INC (Median Household Income) is High impact
+TOT_POP (Total Population) is a significant factor
+Total Gallons Ordered & Total Delivery Cost
+Interpretation:
+
+Economic factors (income, employment, population size) play a huge role in customer classification.
+Order volume & cost also matter but are not the only deciding factors.
+Customers in higher-income & employment areas may behave differently in ordering patterns.
+
+What This Means for the Business
+Cluster 1 & 3 are predictable and well-segmented (no major concerns).
+Cluster 2 has classification issues
+Targeted strategies can be developed based on economic data:
+High-income areas = Premium customer strategies
+Lower-income areas = Alternative route-to-market strategies (ARTM) to optimize delivery costs
+
+## 7.0 Create a Growth Score Formula Based on Clusters
+
+Since we're focusing on Clusters 1 and 3, the goal is to rank customers based on growth potential using a scoring system that incorporates economic and order data.
+
+### 7.1 Doii
+```{r}
+# Assign weights (adjustable based on business insights)
+weights <- list(
+  yoy_total_orders = 0.20,     # 20% weight - how much their total orders are growing
+  yoy_total_gallons_ordered = 0.20, # 20% weight - how much their volume is growing
+  total_gallons_ordered = 0.15, # 15% weight - total gallons ordered
+  total_orders = 0.10,         # 10% weight - how frequently they order
+  MED_HH_INC = 0.10,           # 10% weight - local median household income
+  PER_CAP_INC = 0.10,          # 10% weight - local per capita income
+  EMP_POP = 0.10,              # 10% weight - employment population
+  TOT_POP = 0.05               # 5% weight - total population
+)
+
+# Normalize each factor using min-max scaling (to bring values to a comparable scale)
+customer_clusters <- customer_clusters %>%
+  mutate(
+    yoy_total_orders_scaled = (yoy_total_orders - min(yoy_total_orders, na.rm = TRUE)) /
+                              (max(yoy_total_orders, na.rm = TRUE) - min(yoy_total_orders, na.rm = TRUE)),
+    yoy_total_gallons_ordered_scaled = (yoy_total_gallons_ordered - min(yoy_total_gallons_ordered, na.rm = TRUE)) /
+                                        (max(yoy_total_gallons_ordered, na.rm = TRUE) - min(yoy_total_gallons_ordered, na.rm = TRUE)),
+    total_gallons_ordered_scaled = (total_gallons_ordered - min(total_gallons_ordered, na.rm = TRUE)) /
+                                   (max(total_gallons_ordered, na.rm = TRUE) - min(total_gallons_ordered, na.rm = TRUE)),
+    total_orders_scaled = (total_orders - min(total_orders, na.rm = TRUE)) /
+                          (max(total_orders, na.rm = TRUE) - min(total_orders, na.rm = TRUE)),
+    MED_HH_INC_scaled = (MED_HH_INC - min(MED_HH_INC, na.rm = TRUE)) /
+                        (max(MED_HH_INC, na.rm = TRUE) - min(MED_HH_INC, na.rm = TRUE)),
+    PER_CAP_INC_scaled = (PER_CAP_INC - min(PER_CAP_INC, na.rm = TRUE)) /
+                         (max(PER_CAP_INC, na.rm = TRUE) - min(PER_CAP_INC, na.rm = TRUE)),
+    EMP_POP_scaled = (EMP_POP - min(EMP_POP, na.rm = TRUE)) /
+                     (max(EMP_POP, na.rm = TRUE) - min(EMP_POP, na.rm = TRUE)),
+    TOT_POP_scaled = (TOT_POP - min(TOT_POP, na.rm = TRUE)) /
+                     (max(TOT_POP, na.rm = TRUE) - min(TOT_POP, na.rm = TRUE))
+  )
+
+# Compute the Growth Potential Score (GPS)
+customer_clusters <- customer_clusters %>%
+  mutate(Growth_Potential_Score =
+           (yoy_total_orders_scaled * weights$yoy_total_orders) +
+           (yoy_total_gallons_ordered_scaled * weights$yoy_total_gallons_ordered) +
+           (total_gallons_ordered_scaled * weights$total_gallons_ordered) +
+           (total_orders_scaled * weights$total_orders) +
+           (MED_HH_INC_scaled * weights$MED_HH_INC) +
+           (PER_CAP_INC_scaled * weights$PER_CAP_INC) +
+           (EMP_POP_scaled * weights$EMP_POP) +
+           (TOT_POP_scaled * weights$TOT_POP))
+
+# Rank customers based on Growth Potential Score
+customer_clusters <- customer_clusters %>%
+  arrange(desc(Growth_Potential_Score)) %>%
+  mutate(Growth_Rank = row_number())
+
+# View top 10 high-growth customers
+
+head(customer_clusters[, c("customer_number", "Growth_Potential_Score", "Growth_Rank", "cluster")], 10)
+
+```
+
+What This Means:
+Customers are ranked by Growth_Potential_Score, with higher scores indicating greater potential for volume growth.
+The Growth_Rank orders them accordingly, with Rank 1 being the highest potential customer.
+Cluster 1 and 3 are the only clusters being considered, as planned.
+The highest-ranking customers are primarily from Cluster 1, but some from Cluster 3 also show high growth potential.
+
+## Results
+
+The specific results of our analysis are contained next to the code blocks for the most part. We do have some broad takeaways though based on this initial attempt at modeling.
+
+### Takeaway 1
+
+Our prediction modeling attempts were not as successful as other types of models. In other words, we think that the problems Swire is facing around customer growth and determining which customers to move to "white truck" distribution are probably not best solved through prediction models. This is not surprising as we don't have any data on white truck customers, but we confirmed this by the overal performance of our prediction models.
+
+### Takeaway 2
+
+We think that cold drink channel may be a useful predictor of customer growth. Accross different analysis and growth calculations the same cold drink channels kept popping up. We are going to continue to look into this.
+
+## Group Member Contributions
+
+Joonas Tahvanainen - In charge of the XGB modeling and data cleaning process for taht analysis. 
+
+Nidal Arain - Contributed to the modeling and analysis process by performing clustering, predictive modeling, and developing the Growth Potential Score (GPS).
+
+Kleyton Rodrigo - Handled the bulk of the data cleaning, all of section 2 (RMF score), and the 3.4 and 3.5 (customer growth and demand variation).
+
+Andrew Delis - Analyzed customer growth using the simple month over month calculations and built the ARIMA model. Also compiled the groups code into a single file.
