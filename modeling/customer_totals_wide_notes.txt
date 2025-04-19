@@ -1,0 +1,2 @@
+customer_totals_wide.csv -> The creation of this data can be found in Nidal's modeling notebook
+customer_totals_wide_joonas.csv -> The creation of this data can be found in Joonas's modeling notebook
