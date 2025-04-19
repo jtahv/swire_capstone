@@ -1,0 +1,3222 @@
+---
+title: "Swire Coca-Cola Utah"
+author: "IS 6813: Group 5"
+date: today
+format:
+  html:
+    toc: true
+    toc_float: true  # Enable floating TOC with automatic highlighting
+    self-contained: true  # HTML only, no folders
+    code-tools: true
+    code-fold: TRUE
+    code-summary: "Show the code"
+execute:
+  echo: true
+  eval: true
+  message: false
+  warning: false
+editor: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+library(rmarkdown); library(tidyverse); library(knitr); library(matrixStats); library(ROSE); 
+library(DMwR2); library(randomForest); library(C50); library(clusterSim); library(fpc); library(fossil); 
+library(cvTools); library(cluster); library(flexclust); library(mclust); library(viridis); library(ggplot2); 
+library(rpart); library(RWeka); library(kernlab); library(MLmetrics); library(smotefamily); library(caret); 
+library(rminer); library(tictoc); library(rpart.plot); library(psych); library(ROCR); library(glmnet); 
+library(car); library(reshape2); library(ggcorrplot); library(dplyr); library(tidyr); library(grf); 
+library(kableExtra); library(formattable); library(rattle); library(factoextra); library(corrplot); 
+library(dataPreparation); library(scales); library(DT); library(lubridate); library(data.table); 
+library(glue); library(readxl); library(janitor)
+
+
+one_seed<-500
+# Suppress warnings globally
+options(warn = -1)
+
+mydir <- getwd()
+setwd(mydir)
+```
+
+**Important Note** To display the code, click the **"Code"** button in the body of the document or click the **\</\> Code** button at the top right, then select **"Show All Code."**
+
+------------------
+
+## 1. Business Problem Statement and Objectives
+
+Our client, a major beverage supplier, requires a structured system to optimize logistics between its own fleet (Red Trucks) and alternative delivery methods (ARTM), including partner trucks and third-party carriers (White Trucks). While Red Trucks strengthen customer relationships and drive revenue, ARTM provides flexibility but reduces interaction and control.
+
+To ensure high-quality service and cost efficiency, we will establish clear fleet allocation guidelines based on customer profiles, transaction data, addresses, and delivery costs. This approach will determine the optimal truck type for each customer using a well-defined annual volume threshold. Additionally, customer segmentation will identify shared characteristics, enabling more strategic and data-driven decision-making.
+
+Based on these insights, we will provide actionable recommendations to optimize fleet allocation and enhance operational efficiency.
+
+
+## 2. Analytical Approach and Deliveries
+
+The analysis will be conducted separately for two customer groups:
+
+- **Local Market Partners Buying Fountain Only** – Customers who purchase only fountain drinks, excluding CO2, cans, or bottles.
+- **All Customers** – The broader customer base, including those who purchase various product types.
+
+To tackle logistics challenges and transform decisions into data-driven solutions, our approach will combine predictive models with clustering techniques. We will employ both supervised and unsupervised learning methods to create a structured and efficient logistics framework.
+
+### Supervised Learning
+
+Three supervised learning objectives will be addressed:
+
+1. Establish a minimum annual purchase volume as the primary criterion for fleet allocation.
+2. Classify customers as high growth potential or not, impacting fleet allocation for those below the volume threshold.
+3. Determine whether each customer should be served by Red Trucks (own fleet) or White Trucks (ARTM) based on the previous criteria.
+
+
+**Refining the Fleet Allocation Strategy: Initial Assumptions**
+
+As the dataset does not provide predefined fleet allocation criteria, we will establish initial reference points to guide our analysis:
+
+- Annual Volume Threshold: Customers receiving 400 cases and/or gallons per year will initially be assigned to the Red Truck fleet, while those below this threshold will be served by White Trucks.
+
+- Growth Potential Classification: Customers will be classified based on the variation in delivery volume from January 2023 to December 2024. Those with significant growth above the average will be marked as high potential (`HIGH_GROW_POT = 1`), while others will be low potential (`HIGH_GROW_POT = 0`).
+
+- Fleet Assignment Strategy: Customers exceeding 400 units per year or demonstrating high growth potential will be prioritized for Red Trucks, while all others will be assigned to White Trucks.
+
+These initial assumptions serve as a preliminary framework to better understand the dataset. As the analysis progresses, we will refine these criteria to ensure an optimized and data-driven fleet allocation strategy.
+
+### Unsupervised Learning - Customer Segmentation
+
+A clustering analysis will identify customer groups with similar consumption patterns, refining fleet allocation and enhancing decision-making rules.
+
+### Cost Impact Analysis
+
+We will evaluate different logistics scenarios, comparing the costs of the current strategy with:
+
+- Exclusive use of Red Trucks
+- Optimized allocation between Red and White Trucks
+- Incorporating growth potential as a decision factor
+
+### Recommendations
+
+Based on our analysis, we will provide data-driven recommendations to optimize fleet allocation, focusing on improving service quality, cost efficiency, and strategic decision-making. This will ensure each customer receives the most suitable delivery method.
+
+### Description of the Data
+
+For this project we will be working with four data files provided by Swire. 
+
+  1. customer_profile.csv
+  2. transactional_data.csv
+  3. customer_address_and_zip_mapping.csv
+  4. delivery_cost_data.xlsx
+
+- The customer profile data contains data on all of the Swire’s customers that they deliver to. This file contains their unique customer id and a lot of categorical data that describes their location, the industry the customer is in, and their delivery preferences.
+
+- The transactional data contains all transactions from all customers with the ordered and delivered amount of product measured in cases and gallons.
+
+- The customer address file only contains two columns – zip code and full address. This can be used in tandem with the customer profile data.
+
+- The delivery cost data maps the cost of delivering a product based on different criteria. This will be used with the transaction data to find the cost of each transaction.
+
+
+## 3 Exploratory Data Analysis (EDA) - Part I
+
+In this section, we will analyze the provided data to identify solutions, focusing on completeness, consistency, and potential issues. Data transformations may involve creating new variables to improve model accuracy. Given the large number of variables, this document will prioritize the most relevant ones to ensure clarity, excluding less relevant analyses to avoid information overload.
+
+
+
+### 3.1 Loading and Cleaning Datasets
+
+```{r}
+# Load the profile CSV
+profile_data <- read.csv(file = "customer_profile.csv", 
+                         sep = ",", 
+                         stringsAsFactors = FALSE)
+
+# Load the address CSV
+customer_address <- read.csv(file = "customer_address_and_zip_mapping.csv", 
+                             sep = ",", 
+                             stringsAsFactors = FALSE)
+
+# Load the transactional CSV
+op_data <- read.csv(file = "transactional_data.csv", 
+                           sep = ",", 
+                           stringsAsFactors = FALSE)
+```
+
+Missing data assessments and any substitutions or modifications will be carried out and will be included in the provided R Markdown file. However, some of these actions will not be displayed in this report to avoid content overload.
+
+**Profile Dataset - Cleaning and Adjustments**
+```{r, echo=FALSE, results=FALSE}
+
+# 1. Customer Profile Dataset cleaning and basic transformations
+
+# Data Structure
+str(profile_data)
+
+# Check the number of unique CUSTOMER_NUMBER in profile_data and op_data
+print(length(unique(profile_data$CUSTOMER_NUMBER)))
+print(length(unique(op_data$CUSTOMER_NUMBER)))
+
+# Convert the date columns to Date format
+profile_data$FIRST_DELIVERY_DATE <- as.Date(profile_data$FIRST_DELIVERY_DATE, format = "%m/%d/%Y")
+profile_data$ON_BOARDING_DATE <- as.Date(profile_data$ON_BOARDING_DATE, format = "%m/%d/%Y")
+
+# Convert logical to integer for LOCAL_MARKET_PARTNER
+profile_data$LOCAL_MARKET_PARTNER <- as.integer(profile_data$LOCAL_MARKET_PARTNER)
+
+# Convert logical to integer for CO2_CUSTOMER
+profile_data$CO2_CUSTOMER <- as.integer(profile_data$CO2_CUSTOMER)
+
+# Convert all character columns to factors
+profile_data[sapply(profile_data, is.character)] <- lapply(profile_data[sapply(profile_data, is.character)], as.factor)
+
+# Summary
+summary(profile_data)
+
+# Remove parentheses, any "-" or "&", then trim extra spaces
+profile_data$COLD_DRINK_CHANNEL <- as.factor(gsub("\\s+", " ", gsub("[(]|[)]|[-]|[&]", " ", as.character(profile_data$COLD_DRINK_CHANNEL))))
+profile_data$TRADE_CHANNEL <- as.factor(gsub("\\s+", " ", gsub("[(]|[)]|[-]|[&]", " ", as.character(profile_data$TRADE_CHANNEL))))
+profile_data$SUB_TRADE_CHANNEL <- as.factor(gsub("\\s+", " ", gsub("[(]|[)]|[-]|[&]", " ", as.character(profile_data$SUB_TRADE_CHANNEL))))
+
+
+# Verify the changes in the summary
+summary(profile_data)
+
+# Display the count of NA values for each variable
+cat("NA count for each variable:\n")
+sapply(profile_data, function(x) sum(is.na(x)))
+
+# Display the count of NULL values for each variable
+cat("NULL count for each variable:\n")
+sapply(profile_data, function(x) sum(is.null(x)))
+
+# Replace NA values in PRIMARY_GROUP_NUMBER with zero
+profile_data$PRIMARY_GROUP_NUMBER[is.na(profile_data$PRIMARY_GROUP_NUMBER)] <- 0
+
+# Display the count of duplicate 'CUSTOMER_NUMBER' values
+cat("Number of duplicate CUSTOMER_NUMBER values:", sum(duplicated(profile_data$CUSTOMER_NUMBER)), "\n")
+
+# Create CHAIN_MEMBER column: 0 for non-members, 1 for members
+profile_data$CHAIN_MEMBER <- as.integer(profile_data$PRIMARY_GROUP_NUMBER != 0)
+```
+
+- The number of unique CUSTOMER_NUMBER in profile_data is greater than in transactional data. This will be addressed     later before merging the datasets.
+- There are no duplicates or missing values for CUSTOMER_NUMBER.
+- Date variables were adjusted to the proper format.  
+- Logical variables were converted to integers, where 0 represents false and 1 represents true.
+- Special characters and extra spaces were removed in factor variables.
+- Missing values in the PRIMARY_GROUP_NUMBER field were replaced with zero.  
+- The CHAIN_MEMBER variable was created to indicate whether the outlet belongs to a chain (has a PRIMARY_GROUP_NUMBER).   A value of 1 represents a member, and 0 represents a non-member.
+
+**Customer Address Dataset - Cleaning and Adjustments**
+```{r, echo=FALSE, results=FALSE}
+
+# 2. Customer Address Dataset cleaning and basic transformations
+
+# Data Structure
+str(customer_address)
+
+# Summary
+summary(customer_address)
+
+# Display the count of NA values for each variable
+cat("NA count for each variable:\n")
+sapply(customer_address, function(x) sum(is.na(x)))
+
+# Display the count of NULL values for each variable
+cat("NULL count for each variable:\n")
+sapply(customer_address, function(x) sum(is.null(x)))
+
+# Count duplicate rows based on 'zip' and 'full.address'
+cat("Number of duplicate rows based on 'zip':", sum(duplicated(customer_address$zip)), "\n")
+cat("Number of duplicate rows based on 'full.address':", sum(duplicated(customer_address$full.address)), "\n")
+
+# Split the 'full.address' column into separate components
+separated_columns <- strsplit(customer_address$full.address, ",")
+
+# Modify the existing customer_address data frame with the separated columns in uppercase and appropriate data types
+customer_address$ZIP <- as.integer(customer_address$zip)  
+customer_address$CITY <- as.factor(toupper(sapply(separated_columns, `[`, 2)))
+customer_address$STATE <- as.factor(toupper(sapply(separated_columns, `[`, 4)))
+customer_address$COUNTY <- as.factor(toupper(sapply(separated_columns, `[`, 5)))
+customer_address$REGION <- as.integer(toupper(sapply(separated_columns, `[`, 6)))
+customer_address$LATITUDE <- as.numeric(sapply(separated_columns, `[`, 7))
+customer_address$LONGITUDE <- as.numeric(sapply(separated_columns, `[`, 8))
+
+# Remove the original full.address column
+customer_address$full.address <- NULL
+customer_address$zip <- NULL
+
+# Remove separated_columns variable to clean up memory
+rm(separated_columns)
+
+# Find duplicate rows based on latitude and longitude
+customer_address %>%
+  filter(duplicated(across(c(LATITUDE, LONGITUDE))) | duplicated(across(c(LATITUDE, LONGITUDE)), fromLast = TRUE)) %>%
+  arrange(LATITUDE)
+
+# Example:
+#40574	Lexington	KY	Fayette	67	38.0283	-84.4715
+#40575	Lexington	KY	Fayette	67	38.0283	-84.4715
+#40576	Lexington	KY	Fayette	67	38.0283	-84.4715
+
+```
+
+- The address was split into new columns for each component.  
+
+- The dataset does not contain customers' actual addresses but will be used for data aggregation to support customer     segmentation. It includes 145 rows with identical geographic coordinates; however, no ZIP codes are duplicated.
+
+**Transactionl Dataset - Cleaning and Adjustments**
+```{r, echo=FALSE, results=FALSE}
+
+# 3. Transactional Dataset cleaning and basic transformations
+
+# Data Structure
+str(op_data)
+
+# Transaction date format
+op_data$TRANSACTION_DATE <- as.Date(op_data$TRANSACTION_DATE, format = "%m/%d/%Y")
+
+# Convert the ORDER_TYPE column to a factor
+op_data$ORDER_TYPE <- as.factor(op_data$ORDER_TYPE)
+
+# Summary
+summary(op_data)
+
+# Display the count of NA values for each variable
+cat("NA count for each variable:\n")
+sapply(op_data, function(x) sum(is.na(x)))
+
+#  Order type - convert nulls in OTHERs
+op_data$ORDER_TYPE <- replace(op_data$ORDER_TYPE, op_data$ORDER_TYPE == "null", "OTHER")
+
+# Days after the transaction by 2025-02-01
+op_data$DAYS_AFTER <- as.Date("2025-01-20") - op_data$TRANSACTION_DATE
+
+# Convert DAYS_AFTER to numeric
+op_data$DAYS_AFTER <- as.numeric(op_data$DAYS_AFTER)
+
+# Transactions with no values for cases and gallons
+# Filter the rows where all the values are zero
+qtd_check <- op_data %>%
+  filter(ORDERED_CASES == 0 & LOADED_CASES == 0 & DELIVERED_CASES == 0 &
+         ORDERED_GALLONS == 0 & LOADED_GALLONS == 0 & DELIVERED_GALLONS == 0)
+
+# Display the filtered rows interactively with DT
+datatable(qtd_check, options = list(pageLength = 10, autoWidth = TRUE))
+
+# Remove rows where all case and gallon values are zero
+op_data <- op_data %>%
+  filter(!(ORDERED_CASES == 0 & LOADED_CASES == 0 & DELIVERED_CASES == 0 &
+           ORDERED_GALLONS == 0 & LOADED_GALLONS == 0 & DELIVERED_GALLONS == 0))
+
+# Negative Cases Deliveries
+# Creating RETURNED_CASES column based on DELIVERED_CASES values  
+op_data$RETURNED_CASES <- ifelse(op_data$DELIVERED_CASES < 0, -op_data$DELIVERED_CASES, 0)
+
+# Replacing negative values in DELIVERED_CASES with 0  
+op_data$DELIVERED_CASES[op_data$DELIVERED_CASES < 0] <- 0
+
+# Negative Gallons Deliveries
+# Creating RETURNED_CASES column based on DELIVERED_GALLONS values  
+op_data$RETURNED_GALLONS <- ifelse(op_data$DELIVERED_GALLONS < 0, -op_data$DELIVERED_GALLONS, 0)
+
+# Replacing negative values in DELIVERED_GALLONS with 0  
+op_data$DELIVERED_GALLONS[op_data$DELIVERED_GALLONS < 0] <- 0
+
+# Transactions with no values for Delivered or returned cases and gallons
+# Filter the rows where all the values are zero
+qtd_check <- op_data %>%
+  filter(DELIVERED_CASES == 0 & RETURNED_CASES == 0 & 
+         DELIVERED_GALLONS == 0 & RETURNED_GALLONS == 0)
+
+# Display the filtered rows interactively with DT
+datatable(qtd_check, options = list(pageLength = 10, autoWidth = TRUE))
+
+# Classifying transactions based on delivery and return information
+op_data <- op_data %>%
+  mutate(
+    DLV_TYPE = case_when(
+      DELIVERED_CASES > 0 & DELIVERED_GALLONS == 0 ~ "CASES",  # Delivered cases, no gallons
+      DELIVERED_GALLONS > 0 & DELIVERED_CASES == 0 ~ "GALLONS",  # Delivered gallons, no cases
+      DELIVERED_CASES > 0 & DELIVERED_GALLONS > 0 ~ "BOTH",  # Delivered both cases and gallons
+      RETURNED_CASES > 0 & RETURNED_GALLONS == 0 ~ "RETURN_CASES",  # Returned cases, no gallons
+      RETURNED_GALLONS > 0 & RETURNED_CASES == 0 ~ "RETURN_GALLONS",  # Returned gallons, no cases
+      RETURNED_CASES > 0 & RETURNED_GALLONS > 0 ~ "RETURN_BOTH",  # Returned both cases and gallons
+      TRUE ~ "ORDER_LOAD")) %>%  # Order and/or load transactions
+  mutate(DLV_TYPE = factor(DLV_TYPE))  # Convert to factor
+
+# Remove temporary variables and data frames
+rm(qtd_check)
+
+# Summary DLV_TYPE
+summary(op_data$DLV_TYPE)
+
+```
+
+
+- 11,131 null values in the ORDER_TYPE column were replaced with "OTHER."
+
+- The DAYS_AFTER column was added to track the number of days since the transaction, up to February 2, 2025.
+
+- 483 rows with zero values in ORDERED, LOADED, and DELIVERED CASES and GALLONS will be removed from the dataset.
+
+- Negative values in DELIVERED_CASES and DELIVERED_GALLONS have been moved to new columns (RETURNED_CASES and            RETURNED_GALLONS), and the original columns were set to zero.
+
+- 30,965 transactions are related to order and/or load but do not have delivery or return data. These will be            classified as "order_load" in the DLV_TYPE column.
+
+
+### 3.2 Combined Dataset Driven by Transactions
+
+
+During the exploration, we concluded that combining all available data would be the best approach for subsequent analyses. Two files will be created: one preserving individual transactions and another compiling information by customer. Both will be used later in this EDA.
+
+The PROFILE DATA contains exactly 1801 unique ZIP CODES, which will be merged with the same number of unique ZIP CODES from the CUSTOMER ADDRESS dataset. It's important to note that there are ZIP CODES with the same geographic coordinates, and thus the reliability for these cases is lower.
+
+As mentioned earlier, the number of unique CUSTOMER NUMBERS in the PROFILE DATA (now referred to as FULL DATA) is greater than in the TRANSACTIONS dataset. Only the information for customers present in the TRANSACTIONS dataset will be merged.
+
+```{r, results=FALSE}
+# Merge customer_address with profile_data using ZIP_CODE
+full_data <- profile_data %>%
+  left_join(customer_address, by = c("ZIP_CODE" = "ZIP"))
+
+# Check the number of unique CUSTOMER_NUMBER in full_data and op_data
+print(length(unique(full_data$CUSTOMER_NUMBER)))
+print(length(unique(op_data$CUSTOMER_NUMBER)))
+
+# Filter full_data to keep only CUSTOMER_NUMBERs that are also in op_data, and merge with op_data
+full_data <- full_data %>%
+  filter(CUSTOMER_NUMBER %in% op_data$CUSTOMER_NUMBER) %>%
+  left_join(op_data, by = "CUSTOMER_NUMBER")
+```
+Below are the first few rows of the combined dataset.
+
+```{r}
+# Display the first few rows of the combined dataset
+#head(full_data)
+```
+
+The variable LOCAL_FOUNT_ONLY will be created to identify whether the transaction's customer belongs to the "Local Market Partners Buying Fountain Only" group—customers who purchase only fountain drinks, excluding CO2, cans, or bottles. It will be assigned a value of 1 if the customer belongs to this group and 0 otherwise.
+
+```{r}
+# Aggregate total delivered cases and gallons per customer
+customer_summary <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(
+    TOTAL_DELIVERED_CASES = sum(DELIVERED_CASES),
+    TOTAL_DELIVERED_GALLONS = sum(DELIVERED_GALLONS),
+    LOCAL_MARKET_PARTNER = max(LOCAL_MARKET_PARTNER),
+    CO2_CUSTOMER = max(CO2_CUSTOMER),
+    .groups = "drop")
+
+# Classify customers based on aggregated values
+customer_summary <- customer_summary %>%
+  mutate(LOCAL_FOUNT_ONLY = case_when(
+    LOCAL_MARKET_PARTNER == 1 & CO2_CUSTOMER == 0 & 
+      TOTAL_DELIVERED_GALLONS > 0 & TOTAL_DELIVERED_CASES == 0 ~ 1L,
+    TRUE ~ 0L))
+
+# Merge back to original data
+full_data <- full_data %>%
+  left_join(dplyr::select(customer_summary, CUSTOMER_NUMBER, LOCAL_FOUNT_ONLY), by = "CUSTOMER_NUMBER")
+
+# Remove temporary variables and data frames
+rm(customer_summary)
+```
+
+The code below will create a table for an initial overview of the customer types.
+
+```{r}
+# Aggregate data by LOCAL_FOUNT_ONLY
+summary_data <- full_data %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    customers = n_distinct(CUSTOMER_NUMBER),  # Count unique customers
+    transactions = n(),  # Count transactions for this group
+    qtd_cas = sum(DELIVERED_CASES),  # Total delivered cases
+    qtd_gal = sum(DELIVERED_GALLONS),  # Total delivered gallons
+    total_qtd = sum(DELIVERED_CASES) + sum(DELIVERED_GALLONS),  # Total volume (cases + gallons)
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_cust = customers / sum(customers) * 100,  
+    pct_trans = transactions / nrow(full_data) * 100,  
+    pct_qtd = total_qtd / sum(total_qtd) * 100,  
+    pct_gal = qtd_gal / sum(qtd_gal) * 100  
+  ) %>%
+  rename(LFO = LOCAL_FOUNT_ONLY) %>%  # Rename the column
+  mutate(
+    # Formatting numbers with comma separator, rounding before formatting with commas
+    customers = format(customers, big.mark = ",", scientific = FALSE),
+    transactions = format(transactions, big.mark = ",", scientific = FALSE),
+    qtd_cas = format(round(qtd_cas, 0), big.mark = ",", scientific = FALSE),  
+    qtd_gal = format(round(qtd_gal, 0), big.mark = ",", scientific = FALSE),  
+    total_qtd = format(round(total_qtd, 0), big.mark = ",", scientific = FALSE),  
+    pct_cust = round(pct_cust, 1),
+    pct_trans = round(pct_trans, 1),
+    pct_qtd = round(pct_qtd, 1),
+    pct_gal = round(pct_gal, 1)
+  )
+
+# Add the total row (LFO = "Total")
+total_row <- summary_data %>%
+  summarise(
+    LFO = "Total",
+    customers = sum(as.numeric(gsub(",", "", customers))),
+    transactions = sum(as.numeric(gsub(",", "", transactions))),
+    qtd_cas = sum(as.numeric(gsub(",", "", qtd_cas))),
+    qtd_gal = sum(as.numeric(gsub(",", "", qtd_gal))),
+    total_qtd = sum(as.numeric(gsub(",", "", total_qtd))),
+    pct_cust = 100,
+    pct_trans = 100,
+    pct_qtd = 100,
+    pct_gal = 100
+  ) %>%
+  mutate(
+    customers = format(customers, big.mark = ",", scientific = FALSE),
+    transactions = format(transactions, big.mark = ",", scientific = FALSE),
+    qtd_cas = format(round(qtd_cas, 0), big.mark = ",", scientific = FALSE),
+    qtd_gal = format(round(qtd_gal, 0), big.mark = ",", scientific = FALSE),
+    total_qtd = format(round(total_qtd, 0), big.mark = ",", scientific = FALSE),
+    pct_cust = round(pct_cust, 1),
+    pct_trans = round(pct_trans, 1),
+    pct_qtd = round(pct_qtd, 1),
+    pct_gal = round(pct_gal, 1)
+  )
+
+# Convert LFO to character to ensure consistency
+summary_data <- summary_data %>% mutate(LFO = as.character(LFO))
+total_row <- total_row %>% mutate(LFO = as.character(LFO))
+
+# Combine the summary data with the total row
+combined_data <- bind_rows(summary_data, total_row)
+
+# Reorder the columns
+combined_data <- combined_data[, c("LFO", "customers", "pct_cust", "transactions", "pct_trans", "qtd_cas", "qtd_gal", "pct_gal", "total_qtd", "pct_qtd")]
+
+# Create the combined table
+combined_data %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:10, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "lightgray") %>%  # Light gray header
+  add_header_above(c("Local Market Partners Fountain Only (LFO) - Delivery Quantities Overview" = 10)) %>%
+  kable_paper("striped", full_width = F)
+
+# Remove temporary variables and data frames
+rm(summary_data, total_row, combined_data)
+```
+
+
+```{r, echo=FALSE, results=FALSE}
+# Filter the rows where LOCAL_FOUNT_ONLY == 1 and calculate the sum of DELIVERED_CASES, RETURNED_CASES, ORDERED_CASES and the count of CO2_CUSTOMER
+full_data %>%
+  filter(LOCAL_FOUNT_ONLY == 1) %>%
+  summarise(
+    total_delivered_cases = sum(DELIVERED_CASES, na.rm = TRUE),
+    total_returned_cases = sum(RETURNED_CASES, na.rm = TRUE),
+    total_ordered_cases = sum(ORDERED_CASES, na.rm = TRUE),
+    co2_customer_count = sum(CO2_CUSTOMER == 1, na.rm = TRUE))
+
+# Filter rows where LOCAL_FOUNT_ONLY == 1, and both RETURNED_CASES and ORDERED_CASES are greater than 0
+full_data %>%
+  filter(LOCAL_FOUNT_ONLY == 1, ORDERED_CASES > 0)
+
+```
+
+Only 4.5% of customers are Local Market Partners who do not purchase CO2 and buy only fountain drinks (LFO = 1), accounting for 3% of transactions. They consumed 5.9% of delivered gallons but represent just 1.9% of the total volume (cases + gallons).
+
+This small group of 1,359 customers includes 83 transactions with positive ordered cases. The last order was placed on December 19, 2024, which would allow for some case deliveries to appear in transactions. Since this didn’t happen, we will classify these customers as part of the LFO group, as they consume fountain drinks (gallons), despite ordering cases.
+
+### 3.3 Combined Dataset Driven by Outlets
+
+The information from the combined transaction dataset (`full_data`) will now be merged by customer and named `full_data_customer`. The goal is to create a unique list of customers who have made transactions. This file will contain a large number of columns and will be used for further analysis.
+
+```{r}
+# Creating the YEAR_MONTH column to identify the periods
+full_data <- full_data %>%
+  mutate(YEAR_MONTH = format(as.Date(TRANSACTION_DATE), "%Y_%m"))
+
+# Function to count transactions by period
+count_transactions <- function(df, value_column, prefix) {
+  df %>%
+    group_by(CUSTOMER_NUMBER, YEAR_MONTH) %>%
+    summarise(value_count = sum(!!sym(value_column) > 0, na.rm = TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = YEAR_MONTH, values_from = value_count, names_prefix = prefix, values_fill = list(value_count = 0))
+}
+
+# Counting transactions for each metric
+trans_ordered_cases <- count_transactions(full_data, "ORDERED_CASES", "TRANS_ORD_CA_")
+trans_ordered_gallons <- count_transactions(full_data, "ORDERED_GALLONS", "TRANS_ORD_GAL_")
+trans_delivered_cases <- count_transactions(full_data, "DELIVERED_CASES", "TRANS_DLV_CA_")
+trans_delivered_gallons <- count_transactions(full_data, "DELIVERED_GALLONS", "TRANS_DLV_GAL_")
+trans_returned_cases <- count_transactions(full_data, "RETURNED_CASES", "TRANS_RET_CA_")
+trans_returned_gallons <- count_transactions(full_data, "RETURNED_GALLONS", "TRANS_RET_GAL_")
+
+# Function to sum the values by period
+sum_transactions <- function(df, value_column, prefix) {
+  df %>%
+    group_by(CUSTOMER_NUMBER, YEAR_MONTH) %>%
+    summarise(value_sum = sum(!!sym(value_column), na.rm = TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = YEAR_MONTH, values_from = value_sum, names_prefix = prefix, values_fill = list(value_sum = 0))
+}
+
+# Summing transactions for each metric
+qtd_ordered_cases <- sum_transactions(full_data, "ORDERED_CASES", "QTD_ORD_CA_")
+qtd_ordered_gallons <- sum_transactions(full_data, "ORDERED_GALLONS", "QTD_ORD_GAL_")
+qtd_delivered_cases <- sum_transactions(full_data, "DELIVERED_CASES", "QTD_DLV_CA_")
+qtd_delivered_gallons <- sum_transactions(full_data, "DELIVERED_GALLONS", "QTD_DLV_GAL_")
+qtd_returned_cases <- sum_transactions(full_data, "RETURNED_CASES", "QTD_RET_CA_")
+qtd_returned_gallons <- sum_transactions(full_data, "RETURNED_GALLONS", "QTD_RET_GAL_")
+
+# Ensure the columns in column_order are present in full_data
+column_order <- c("CUSTOMER_NUMBER", "PRIMARY_GROUP_NUMBER", "FREQUENT_ORDER_TYPE", 
+                  "FIRST_DELIVERY_DATE", "ON_BOARDING_DATE", "LOCAL_FOUNT_ONLY","COLD_DRINK_CHANNEL", 
+                  "TRADE_CHANNEL", "SUB_TRADE_CHANNEL", "LOCAL_MARKET_PARTNER", 
+                  "CO2_CUSTOMER", "ZIP_CODE", "CHAIN_MEMBER", "CITY", "STATE", 
+                  "COUNTY", "REGION", "LATITUDE", "LONGITUDE")
+
+# Check if all columns exist in full_data
+missing_cols <- setdiff(column_order, colnames(full_data))
+if (length(missing_cols) > 0) {
+  stop("The following columns are missing in full_data: ", paste(missing_cols, collapse = ", "))
+}
+
+# Count the number of transactions per customer
+trans_count <- full_data %>%
+  group_by(CUSTOMER_NUMBER) %>%
+  summarise(TRANSACTIONS_DATE_COUNT = n(), .groups = "drop")
+
+# Joining the data with the required columns in the desired order
+full_data_customer <- distinct(full_data[, column_order]) %>%
+  left_join(trans_count, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_ordered_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_ordered_gallons, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_delivered_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_delivered_gallons, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_returned_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(trans_returned_gallons, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_ordered_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_ordered_gallons, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_delivered_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_delivered_gallons, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_returned_cases, by = "CUSTOMER_NUMBER") %>%
+  left_join(qtd_returned_gallons, by = "CUSTOMER_NUMBER")
+
+# Count transactions by ORDER_TYPE
+order_type_count <- full_data %>%
+  group_by(CUSTOMER_NUMBER, ORDER_TYPE) %>%
+  summarise(order_type_count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = ORDER_TYPE, values_from = order_type_count, names_prefix = "OT_", values_fill = list(order_type_count = 0))
+
+# Count transactions by DLV_TYPE
+dlv_type_count <- full_data %>%
+  group_by(CUSTOMER_NUMBER, DLV_TYPE) %>%
+  summarise(dlv_type_count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = DLV_TYPE, values_from = dlv_type_count, names_prefix = "DLVT_", values_fill = list(dlv_type_count = 0))
+
+# Join with the full_data_customer to ensure ORDER_TYPE and DLV_TYPE columns are added
+full_data_customer <- full_data_customer %>%
+  left_join(order_type_count, by = "CUSTOMER_NUMBER") %>%
+  left_join(dlv_type_count, by = "CUSTOMER_NUMBER")
+
+# Adding the requested summary columns
+full_data_customer <- full_data_customer %>%
+  mutate(TOTAL_CASES_ORDERED = rowSums(full_data_customer[, grep("^QTD_ORD_CA_", names(full_data_customer))]),
+         TOTAL_CASES_DELIVERED = rowSums(full_data_customer[, grep("^QTD_DLV_CA_", names(full_data_customer))]),
+         TOTAL_GALLONS_ORDERED = rowSums(full_data_customer[, grep("^QTD_ORD_GAL_", names(full_data_customer))]),
+         TOTAL_GALLONS_DELIVERED = rowSums(full_data_customer[, grep("^QTD_DLV_GAL_", names(full_data_customer))]),
+         TOTAL_CASES_RETURNED = rowSums(full_data_customer[, grep("^QTD_RET_CA_", names(full_data_customer))]),
+         TOTAL_GALLONS_RETURNED = rowSums(full_data_customer[, grep("^QTD_RET_GAL_", names(full_data_customer))]))
+
+# Ensuring column order
+ot_columns <- colnames(order_type_count)[-1]
+dlvt_columns <- colnames(dlv_type_count)[-1]
+summary_columns <- c("TOTAL_CASES_ORDERED", "TOTAL_CASES_DELIVERED", "TOTAL_GALLONS_ORDERED", "TOTAL_GALLONS_DELIVERED", "TOTAL_CASES_RETURNED", "TOTAL_GALLONS_RETURNED")
+transaction_columns <- grep("^TRANS_", colnames(full_data_customer), value = TRUE)
+quantity_columns <- grep("^QTD_", colnames(full_data_customer), value = TRUE)
+ordered_columns <- c(column_order, "TRANSACTIONS_DATE_COUNT", ot_columns, dlvt_columns, summary_columns, sort(transaction_columns), sort(quantity_columns))
+
+# Reordering full_data_customer
+full_data_customer <- full_data_customer[, ordered_columns]
+
+# Replacing NAs with 0 in transaction and quantity columns
+full_data_customer[is.na(full_data_customer)] <- 0
+
+# Extra variables
+
+# Define reference date
+ref_date <- as.Date("2025-02-01")
+
+# 1. DAYS_FIRST_DLV
+full_data_customer$DAYS_FIRST_DLV <- as.numeric(difftime(ref_date, full_data_customer$FIRST_DELIVERY_DATE, units = "days"))
+
+# 2. DAYS_ONBOARDING
+full_data_customer$DAYS_ONBOARDING <- as.numeric(difftime(ref_date, full_data_customer$ON_BOARDING_DATE, units = "days"))
+
+# 3. Average transactions per month
+# Replace NA with 0 for missing transactions
+full_data_customer[is.na(full_data_customer)] <- 0
+
+# Calculate the average transaction per month
+cols_to_average_dlv <- grep("^TRANS_DLV_CA", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_dlv] <- lapply(full_data_customer[cols_to_average_dlv], as.numeric)
+full_data_customer$AVG_TRANS_DLV_CA_M <- rowMeans(full_data_customer[, cols_to_average_dlv], na.rm = TRUE)
+
+cols_to_average_gal <- grep("^TRANS_DLV_GAL", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_gal] <- lapply(full_data_customer[cols_to_average_gal], as.numeric)
+full_data_customer$AVG_TRANS_DLV_GAL_M <- rowMeans(full_data_customer[, cols_to_average_gal], na.rm = TRUE)
+
+cols_to_average_ord_ca <- grep("^TRANS_ORD_CA", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_ord_ca] <- lapply(full_data_customer[cols_to_average_ord_ca], as.numeric)
+full_data_customer$AVG_TRANS_ORD_CA_M <- rowMeans(full_data_customer[, cols_to_average_ord_ca], na.rm = TRUE)
+
+cols_to_average_ord_gal <- grep("^TRANS_ORD_GAL", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_ord_gal] <- lapply(full_data_customer[cols_to_average_ord_gal], as.numeric)
+full_data_customer$AVG_TRANS_ORD_GAL_M <- rowMeans(full_data_customer[, cols_to_average_ord_gal], na.rm = TRUE)
+
+cols_to_average_ret_ca <- grep("^TRANS_RET_CA", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_ret_ca] <- lapply(full_data_customer[cols_to_average_ret_ca], as.numeric)
+full_data_customer$AVG_TRANS_RET_CA_M <- rowMeans(full_data_customer[, cols_to_average_ret_ca], na.rm = TRUE)
+
+cols_to_average_ret_gal <- grep("^TRANS_RET_GAL", names(full_data_customer), value = TRUE)
+full_data_customer[cols_to_average_ret_gal] <- lapply(full_data_customer[cols_to_average_ret_gal], as.numeric)
+full_data_customer$AVG_TRANS_RET_GAL_M <- rowMeans(full_data_customer[, cols_to_average_ret_gal], na.rm = TRUE)
+
+# 4. Number of transactions per year (sum annual columns)
+full_data_customer$NUM_TRANS_ORD_CA_23 <- rowSums(full_data_customer[, grep("^TRANS_ORD_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_ORD_CA_24 <- rowSums(full_data_customer[, grep("^TRANS_ORD_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_ORD_GAL_23 <- rowSums(full_data_customer[, grep("^TRANS_ORD_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_ORD_GAL_24 <- rowSums(full_data_customer[, grep("^TRANS_ORD_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_DLV_CA_23 <- rowSums(full_data_customer[, grep("^TRANS_DLV_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_DLV_CA_24 <- rowSums(full_data_customer[, grep("^TRANS_DLV_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_DLV_GAL_23 <- rowSums(full_data_customer[, grep("^TRANS_DLV_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_DLV_GAL_24 <- rowSums(full_data_customer[, grep("^TRANS_DLV_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_RET_CA_23 <- rowSums(full_data_customer[, grep("^TRANS_RET_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_RET_CA_24 <- rowSums(full_data_customer[, grep("^TRANS_RET_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_RET_GAL_23 <- rowSums(full_data_customer[, grep("^TRANS_RET_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$NUM_TRANS_RET_GAL_24 <- rowSums(full_data_customer[, grep("^TRANS_RET_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+
+# 5. Sum of quantities per year
+full_data_customer$QTD_ORD_CA_2023 <- rowSums(full_data_customer[, grep("^QTD_ORD_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_ORD_GAL_2023 <- rowSums(full_data_customer[, grep("^QTD_ORD_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_ORD_CA_2024 <- rowSums(full_data_customer[, grep("^QTD_ORD_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_ORD_GAL_2024 <- rowSums(full_data_customer[, grep("^QTD_ORD_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_DLV_CA_2023 <- rowSums(full_data_customer[, grep("^QTD_DLV_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_DLV_GAL_2023 <- rowSums(full_data_customer[, grep("^QTD_DLV_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_DLV_CA_2024 <- rowSums(full_data_customer[, grep("^QTD_DLV_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_DLV_GAL_2024 <- rowSums(full_data_customer[, grep("^QTD_DLV_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_RET_CA_2023 <- rowSums(full_data_customer[, grep("^QTD_RET_CA_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_RET_GAL_2023 <- rowSums(full_data_customer[, grep("^QTD_RET_GAL_2023", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_RET_CA_2024 <- rowSums(full_data_customer[, grep("^QTD_RET_CA_2024", names(full_data_customer))], na.rm = TRUE)
+full_data_customer$QTD_RET_GAL_2024 <- rowSums(full_data_customer[, grep("^QTD_RET_GAL_2024", names(full_data_customer))], na.rm = TRUE)
+
+# 6. Create new columns for CUST_23 and CUST_24
+full_data_customer$ACTIVE_23 <- ifelse((full_data_customer$QTD_DLV_CA_2023 + full_data_customer$QTD_DLV_GAL_2023) > 0, 1, 0)
+full_data_customer$ACTIVE_24 <- ifelse((full_data_customer$QTD_DLV_CA_2024 + full_data_customer$QTD_DLV_GAL_2024) > 0, 1, 0)
+
+# Display the first few rows of the combined dataset
+#head(full_data_customer)
+
+```
+
+To avoid having to perform the entire processing again, the new datasets will be saved and reloaded whenever necessary.
+
+```{r, echo=FALSE, results=FALSE}
+# Remove temporary data frames
+rm(list = c("trans_ordered_cases", "trans_ordered_gallons", "trans_delivered_cases", 
+            "trans_delivered_gallons", "trans_returned_cases", "trans_returned_gallons", 
+            "qtd_ordered_cases", "qtd_ordered_gallons", "qtd_delivered_cases", 
+            "qtd_delivered_gallons", "qtd_returned_cases", "qtd_returned_gallons", 
+            "trans_count", "order_type_count", "dlv_type_count"))
+
+# Remove temporary functions
+rm(list = c("count_transactions", "sum_transactions"))
+
+# Remove column order vector
+rm(column_order)
+
+# Remove unnecessary variables
+rm(list = c("cols_to_average_dlv", "cols_to_average_gal", "cols_to_average_ord_ca", 
+            "cols_to_average_ord_gal", "cols_to_average_ret_ca", "cols_to_average_ret_gal", 
+            "ref_date"))
+```
+
+### 3.4 Estimated Delivery Costs
+
+The delivery costs will reflect estimated volumes, as they were provided based on the median price within volume ranges and by type of COLD_DRINK_CHANNEL. However, the "CONVENTIONAL" category is not listed in the file. We understand that it represents pharmacy retailers or independent local stores; therefore, for calculation purposes, we will use the same cost applied to GOODS.
+
+```{r}
+# Load the delivery cost data from the Excel file
+cost_data <- read_excel("delivery_cost_data.xlsx")
+
+# Convert 'Cold Drink Channel' to a factor
+cost_data <- cost_data %>%
+  mutate(COLD_DRINK_CHANNEL = factor(`Cold Drink Channel`))
+
+# Copy rows where 'Cold Drink Channel' is "GOODS" and change its value to "CONVENTIONAL"
+cost_data <- bind_rows(
+  cost_data,
+  cost_data %>%
+    filter(COLD_DRINK_CHANNEL == "GOODS") %>%
+    mutate(COLD_DRINK_CHANNEL = "CONVENTIONAL")
+)
+
+# Manually recode 'Applicable To' values
+cost_data <- cost_data %>%
+  mutate(`Applicable To` = ifelse(`Applicable To` == "Bottles and Cans", "CASES", 
+                                  ifelse(`Applicable To` == "Fountain", "GALLONS", `Applicable To`)))
+
+# Create RANGE_LEVEL based on 'Vol Range' and make it a factor
+cost_data$RANGE_LEVEL <- factor(case_when(
+  cost_data$`Vol Range` == "0 - 149" & cost_data$`Applicable To` == "CASES" ~ "RANGE_1_CASES",
+  cost_data$`Vol Range` == "150 - 299" & cost_data$`Applicable To` == "CASES" ~ "RANGE_2_CASES", 
+  cost_data$`Vol Range` == "300 - 449" & cost_data$`Applicable To` == "CASES" ~ "RANGE_3_CASES",
+  cost_data$`Vol Range` == "450 - 599" & cost_data$`Applicable To` == "CASES" ~ "RANGE_4_CASES",
+  cost_data$`Vol Range` == "600 - 749" & cost_data$`Applicable To` == "CASES" ~ "RANGE_5_CASES",
+  cost_data$`Vol Range` == "750 - 899" & cost_data$`Applicable To` == "CASES" ~ "RANGE_6_CASES",
+  cost_data$`Vol Range` == "900 - 1049" & cost_data$`Applicable To` == "CASES" ~ "RANGE_7_CASES",
+  cost_data$`Vol Range` == "1050 - 1199" & cost_data$`Applicable To` == "CASES" ~ "RANGE_8_CASES",
+  cost_data$`Vol Range` == "1200 - 1349" & cost_data$`Applicable To` == "CASES" ~ "RANGE_9_CASES",
+  cost_data$`Vol Range` == "1350+" & cost_data$`Applicable To` == "CASES" ~ "RANGE_10_CASES",
+  
+  cost_data$`Vol Range` == "0 - 149" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_1_GALLONS",
+  cost_data$`Vol Range` == "150 - 299" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_2_GALLONS", 
+  cost_data$`Vol Range` == "300 - 449" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_3_GALLONS",
+  cost_data$`Vol Range` == "450 - 599" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_4_GALLONS",
+  cost_data$`Vol Range` == "600 - 749" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_5_GALLONS",
+  cost_data$`Vol Range` == "750 - 899" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_6_GALLONS",
+  cost_data$`Vol Range` == "900 - 1049" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_7_GALLONS",
+  cost_data$`Vol Range` == "1050 - 1199" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_8_GALLONS",
+  cost_data$`Vol Range` == "1200 - 1349" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_9_GALLONS",
+  cost_data$`Vol Range` == "1350+" & cost_data$`Applicable To` == "GALLONS" ~ "RANGE_10_GALLONS"
+))
+
+# Reorder columns to keep only the desired ones: COLD_DRINK_CHANNEL, VOL_RANGE, RANGE_LEVEL, MEDIAN DELIVERY COST
+cost_data <- cost_data[, c("COLD_DRINK_CHANNEL", "Vol Range", "RANGE_LEVEL", "Median Delivery Cost")]
+
+# Check the result
+#head(cost_data)
+```
+
+The necessary variables will be created to calculate the delivery costs for cases and gallons for the years 2023 and 2024 by customer.
+
+```{r}
+# Create cost range columns for each year based on quantities
+full_data_customer <- full_data_customer %>%
+  mutate(
+    # For 2023, categorize based on quantity ranges for cases
+    COST_RANGE_CA_23 = case_when(
+      QTD_DLV_CA_2023 >= 0 & QTD_DLV_CA_2023 < 150 ~ "RANGE_1_CASES", 
+      QTD_DLV_CA_2023 >= 150 & QTD_DLV_CA_2023 < 300 ~ "RANGE_2_CASES",
+      QTD_DLV_CA_2023 >= 300 & QTD_DLV_CA_2023 < 450 ~ "RANGE_3_CASES",
+      QTD_DLV_CA_2023 >= 450 & QTD_DLV_CA_2023 < 600 ~ "RANGE_4_CASES",
+      QTD_DLV_CA_2023 >= 600 & QTD_DLV_CA_2023 < 750 ~ "RANGE_5_CASES",
+      QTD_DLV_CA_2023 >= 750 & QTD_DLV_CA_2023 < 900 ~ "RANGE_6_CASES",
+      QTD_DLV_CA_2023 >= 900 & QTD_DLV_CA_2023 < 1050 ~ "RANGE_7_CASES",
+      QTD_DLV_CA_2023 >= 1050 & QTD_DLV_CA_2023 < 1200 ~ "RANGE_8_CASES",
+      QTD_DLV_CA_2023 >= 1200 & QTD_DLV_CA_2023 < 1350 ~ "RANGE_9_CASES",
+      QTD_DLV_CA_2023 >= 1350 ~ "RANGE_10_CASES", 
+      TRUE ~ NA_character_),
+    
+    # For 2024, categorize based on quantity ranges for cases
+    COST_RANGE_CA_24 = case_when(
+      QTD_DLV_CA_2024 >= 0 & QTD_DLV_CA_2024 < 150 ~ "RANGE_1_CASES",
+      QTD_DLV_CA_2024 >= 150 & QTD_DLV_CA_2024 < 300 ~ "RANGE_2_CASES",
+      QTD_DLV_CA_2024 >= 300 & QTD_DLV_CA_2024 < 450 ~ "RANGE_3_CASES",
+      QTD_DLV_CA_2024 >= 450 & QTD_DLV_CA_2024 < 600 ~ "RANGE_4_CASES",
+      QTD_DLV_CA_2024 >= 600 & QTD_DLV_CA_2024 < 750 ~ "RANGE_5_CASES",
+      QTD_DLV_CA_2024 >= 750 & QTD_DLV_CA_2024 < 900 ~ "RANGE_6_CASES",
+      QTD_DLV_CA_2024 >= 900 & QTD_DLV_CA_2024 < 1050 ~ "RANGE_7_CASES",
+      QTD_DLV_CA_2024 >= 1050 & QTD_DLV_CA_2024 < 1200 ~ "RANGE_8_CASES",
+      QTD_DLV_CA_2024 >= 1200 & QTD_DLV_CA_2024 < 1350 ~ "RANGE_9_CASES",
+      QTD_DLV_CA_2024 >= 1350 ~ "RANGE_10_CASES",
+      TRUE ~ NA_character_),
+    
+    # For 2023, categorize based on quantity ranges for gallons
+    COST_RANGE_GAL_23 = case_when(
+      QTD_DLV_GAL_2023 >= 0 & QTD_DLV_GAL_2023 < 150 ~ "RANGE_1_GALLONS", 
+      QTD_DLV_GAL_2023 >= 150 & QTD_DLV_GAL_2023 < 300 ~ "RANGE_2_GALLONS",
+      QTD_DLV_GAL_2023 >= 300 & QTD_DLV_GAL_2023 < 450 ~ "RANGE_3_GALLONS",
+      QTD_DLV_GAL_2023 >= 450 & QTD_DLV_GAL_2023 < 600 ~ "RANGE_4_GALLONS",
+      QTD_DLV_GAL_2023 >= 600 & QTD_DLV_GAL_2023 < 750 ~ "RANGE_5_GALLONS",
+      QTD_DLV_GAL_2023 >= 750 & QTD_DLV_GAL_2023 < 900 ~ "RANGE_6_GALLONS",
+      QTD_DLV_GAL_2023 >= 900 & QTD_DLV_GAL_2023 < 1050 ~ "RANGE_7_GALLONS",
+      QTD_DLV_GAL_2023 >= 1050 & QTD_DLV_GAL_2023 < 1200 ~ "RANGE_8_GALLONS",
+      QTD_DLV_GAL_2023 >= 1200 & QTD_DLV_GAL_2023 < 1350 ~ "RANGE_9_GALLONS",
+      QTD_DLV_GAL_2023 >= 1350 ~ "RANGE_10_GALLONS", 
+      TRUE ~ NA_character_),
+    
+    # For 2024, categorize based on quantity ranges for gallons
+    COST_RANGE_GAL_24 = case_when(
+      QTD_DLV_GAL_2024 >= 0 & QTD_DLV_GAL_2024 < 150 ~ "RANGE_1_GALLONS",
+      QTD_DLV_GAL_2024 >= 150 & QTD_DLV_GAL_2024 < 300 ~ "RANGE_2_GALLONS",
+      QTD_DLV_GAL_2024 >= 300 & QTD_DLV_GAL_2024 < 450 ~ "RANGE_3_GALLONS",
+      QTD_DLV_GAL_2024 >= 450 & QTD_DLV_GAL_2024 < 600 ~ "RANGE_4_GALLONS",
+      QTD_DLV_GAL_2024 >= 600 & QTD_DLV_GAL_2024 < 750 ~ "RANGE_5_GALLONS",
+      QTD_DLV_GAL_2024 >= 750 & QTD_DLV_GAL_2024 < 900 ~ "RANGE_6_GALLONS",
+      QTD_DLV_GAL_2024 >= 900 & QTD_DLV_GAL_2024 < 1050 ~ "RANGE_7_GALLONS",
+      QTD_DLV_GAL_2024 >= 1050 & QTD_DLV_GAL_2024 < 1200 ~ "RANGE_8_GALLONS",
+      QTD_DLV_GAL_2024 >= 1200 & QTD_DLV_GAL_2024 < 1350 ~ "RANGE_9_GALLONS",
+      QTD_DLV_GAL_2024 >= 1350 ~ "RANGE_10_GALLONS",
+      TRUE ~ NA_character_ ))
+
+
+# First join for UNIT_COST_CA_23
+full_data_customer <- full_data_customer %>%
+  left_join(cost_data %>% dplyr::select(COLD_DRINK_CHANNEL, RANGE_LEVEL, `Median Delivery Cost`), 
+            by = c("COLD_DRINK_CHANNEL" = "COLD_DRINK_CHANNEL", 
+                   "COST_RANGE_CA_23" = "RANGE_LEVEL")) %>%
+  mutate(UNIT_COST_CA_23 = `Median Delivery Cost`) %>%
+  dplyr::select(-`Median Delivery Cost`)  # Remove unwanted column
+
+# Second join for UNIT_COST_CA_24
+full_data_customer <- full_data_customer %>%
+  left_join(cost_data %>% dplyr::select(COLD_DRINK_CHANNEL, RANGE_LEVEL, `Median Delivery Cost`), 
+            by = c("COLD_DRINK_CHANNEL" = "COLD_DRINK_CHANNEL", 
+                   "COST_RANGE_CA_24" = "RANGE_LEVEL")) %>%
+  mutate(UNIT_COST_CA_24 = `Median Delivery Cost`) %>%
+  dplyr::select(-`Median Delivery Cost`)  # Remove unwanted column
+
+# Third join for UNIT_COST_GAL_23
+full_data_customer <- full_data_customer %>%
+  left_join(cost_data %>% dplyr::select(COLD_DRINK_CHANNEL, RANGE_LEVEL, `Median Delivery Cost`), 
+            by = c("COLD_DRINK_CHANNEL" = "COLD_DRINK_CHANNEL", 
+                   "COST_RANGE_GAL_23" = "RANGE_LEVEL")) %>%
+  mutate(UNIT_COST_GAL_23 = `Median Delivery Cost`) %>%
+  dplyr::select(-`Median Delivery Cost`)  # Remove unwanted column
+
+# Fourth join for UNIT_COST_GAL_24
+full_data_customer <- full_data_customer %>%
+  left_join(cost_data %>% dplyr::select(COLD_DRINK_CHANNEL, RANGE_LEVEL, `Median Delivery Cost`), 
+            by = c("COLD_DRINK_CHANNEL" = "COLD_DRINK_CHANNEL", 
+                   "COST_RANGE_GAL_24" = "RANGE_LEVEL")) %>%
+  mutate(UNIT_COST_GAL_24 = `Median Delivery Cost`) %>%
+  dplyr::select(-`Median Delivery Cost`)  # Remove unwanted column
+
+# Calculating delivery costs for each year and drink type
+full_data_customer <- full_data_customer %>%
+  mutate(
+    COST_CA_23 = QTD_DLV_CA_2023 * UNIT_COST_CA_23,
+    COST_CA_24 = QTD_DLV_CA_2024 * UNIT_COST_CA_24,
+    COST_GAL_23 = QTD_DLV_GAL_2023 * UNIT_COST_GAL_23,
+    COST_GAL_24 = QTD_DLV_GAL_2024 * UNIT_COST_GAL_24 )
+
+# Format unit costs and costs to two decimal places
+full_data_customer <- full_data_customer %>%
+  mutate(
+    UNIT_COST_CA_23 = round(UNIT_COST_CA_23, 2),
+    UNIT_COST_CA_24 = round(UNIT_COST_CA_24, 2),
+    UNIT_COST_GAL_23 = round(UNIT_COST_GAL_23, 2),
+    UNIT_COST_GAL_24 = round(UNIT_COST_GAL_24, 2),
+    COST_CA_23 = round(COST_CA_23, 2),
+    COST_CA_24 = round(COST_CA_24, 2),
+    COST_GAL_23 = round(COST_GAL_23, 2),
+    COST_GAL_24 = round(COST_GAL_24, 2))
+```
+
+The table below presents the information that constitutes the calculation of the delivery cost per customer.
+
+```{r, warning=FALSE}
+# Costs table
+summary_table <- as.data.table(full_data_customer)[, .(
+  CUSTOMER_NUMBER, COLD_DRINK_CHANNEL,
+  QTD_DLV_CA_2023 = round(QTD_DLV_CA_2023, 0), 
+  QTD_DLV_CA_2024 = round(QTD_DLV_CA_2024, 0), 
+  QTD_DLV_GAL_2023 = round(QTD_DLV_GAL_2023, 0), 
+  QTD_DLV_GAL_2024 = round(QTD_DLV_GAL_2024, 0),
+  COST_RANGE_CA_23, COST_RANGE_CA_24, COST_RANGE_GAL_23, COST_RANGE_GAL_24,
+  UNIT_COST_CA_23 = round(UNIT_COST_CA_23, 2), 
+  UNIT_COST_CA_24 = round(UNIT_COST_CA_24, 2), 
+  UNIT_COST_GAL_23 = round(UNIT_COST_GAL_23, 2), 
+  UNIT_COST_GAL_24 = round(UNIT_COST_GAL_24, 2),
+  COST_CA_23 = round(COST_CA_23, 2), 
+  COST_CA_24 = round(COST_CA_24, 2), 
+  COST_GAL_23 = round(COST_GAL_23, 2), 
+  COST_GAL_24 = round(COST_GAL_24, 2))]
+
+# Display the table interactively
+datatable(summary_table, options = list(
+pageLength = 10, scrollX = TRUE, scrollY = TRUE))
+```
+
+All costs are being calculated correctly. At this moment, percentage variations for the number of operations, demands, and costs have not been generated because not all customers have a history for 2023 and 2024, which prevents such calculations. However, we will later identify ways to quantify the growth of each customer.
+
+### 3.5 Target Variables: Initial Assumptions
+
+As initially explained, we will establish classifications related to the target variables to create an initial reference point.
+
+#### 3.5.1 - Demand Threshold
+
+We will calculate the average annual consumption per customer and classify them based on whether they exceed the threshold of 400 units (cases plus gallons).
+
+```{r}
+# Creating temporary variables
+full_data_customer$QTD_DLV_CA_GAL_2023 <- full_data_customer$QTD_DLV_CA_2023 + full_data_customer$QTD_DLV_GAL_2023
+full_data_customer$QTD_DLV_CA_GAL_2024 <- full_data_customer$QTD_DLV_CA_2024 + full_data_customer$QTD_DLV_GAL_2024
+
+# Creating the QTD_DLV_TOTAL variable
+full_data_customer$QTD_DLV_TOTAL <- full_data_customer$QTD_DLV_CA_GAL_2023 + full_data_customer$QTD_DLV_CA_GAL_2024
+
+# Calculating the average
+full_data_customer$AVG_ANNUAL_CONSUMP <- round((full_data_customer$QTD_DLV_CA_GAL_2023 + full_data_customer$QTD_DLV_CA_GAL_2024) / 2, 1)
+
+# Creating the THRESHOLD_REACH variable
+full_data_customer$THRESHOLD_REACH <- ifelse(full_data_customer$AVG_ANNUAL_CONSUMP < 400, 0, 1)
+
+```
+
+#### 3.5.2 - Cost Analysis For Determining An Optimal Volume Threshold
+
+This section combines all the data that Swire shared with us in a slightly different way than we have so far done in the analysis. The goal is to aggregate the data to yearly totals per customer, so we can calculate costs and average costs, and then use that information to determine if Swire's current threshold is optimal, or if there is a need to adjust.
+
+Since we have two years of transactional data, most customers will have two rows of information. 
+
+``` {r, warning=FALSE, message=FALSE}
+
+address_mapping <- read_csv("customer_address_and_zip_mapping.csv")
+customer_profile <- read_csv("customer_profile.csv")
+delivery_costs <- read_excel("delivery_cost_data.xlsx")
+transactions <- read_csv("transactional_data.csv")
+
+# clean delivery cost names
+delivery_costs <- delivery_costs %>% 
+  clean_names()
+
+# separate the full address in address mapping
+address_mapping <- address_mapping %>%
+  rename(full_address = `full address`, zip_code = zip) %>%
+  separate(full_address, into = c("zip_full", "city", "state", "state_short", "county", "unknown", "latitude", "longitude"), sep = ",", convert = TRUE) %>%
+  dplyr::select(-unknown, -zip_full)
+
+# join address mapping to customer profile by zip codes, so we can get the city, state, and county for each customer
+customer_profile <- customer_profile %>% clean_names()
+customer_profile <- customer_profile %>% 
+  left_join(address_mapping, by = "zip_code")
+
+# if customer doesn't have a groupo number, assign a 1 to them
+customer_profile <- customer_profile %>%
+  mutate(primary_group_number = ifelse(is.na(primary_group_number), 1, primary_group_number))
+
+transactions <- transactions %>% clean_names()
+
+# since 1 case = 1 gallon, we can just calculate total gallons for each category (order, load, delivery)
+transactions <- transactions %>%
+  mutate(total_gallons_ordered = ordered_cases + ordered_gallons,
+         total_gallons_loaded = loaded_cases + loaded_gallons,
+         total_gallons_delivered = delivered_cases + delivered_gallons)
+
+# this is what aggregates the data by customer and year and creates all those summary variables (totals and averages)_
+transactions_agg <- transactions %>% 
+  group_by(customer_number, year) %>% 
+  summarise(total_orders = n(),
+            # totals for the year
+            ordered_cases = sum(ordered_cases),
+            loaded_cases = sum(loaded_cases),
+            delivered_cases = sum(delivered_cases),
+            ordered_gallons = sum(ordered_gallons),
+            loaded_gallons = sum(loaded_gallons),
+            delivered_gallons = sum(delivered_gallons),
+            total_gallons_ordered = sum(total_gallons_ordered),
+            total_gallons_loaded = sum(total_gallons_loaded),
+            total_gallons_delivered = sum(total_gallons_delivered),
+            # order averages for the year:
+            avg_ordered_cases = mean(ordered_cases),
+            avg_loaded_cases = mean(loaded_cases),
+            avg_delivered_cases = mean(delivered_cases),
+            avg_ordered_gallons = mean(ordered_gallons),
+            avg_loaded_gallons = mean(loaded_gallons),
+            avg_delivered_gallons = mean(delivered_gallons),
+            avg_total_gallons_ordered = mean(total_gallons_ordered),
+            avg_total_gallons_loaded = mean(total_gallons_loaded),
+            avg_total_gallons_delivered = mean(total_gallons_delivered)
+            ) %>%
+  ungroup()
+
+
+# this joins the above aggregated yearly transactions to the customer profiles
+customer_totals_yearly <- customer_profile %>%
+  left_join(transactions_agg, by = "customer_number")
+
+# clean up delivery costs. breaks up the vol_range column so it can be used for easy joining when joining to yearly totals
+delivery_costs_clean <- delivery_costs %>%
+  mutate(vol_range = gsub("\\+", " - 99999", vol_range),
+         median_delivery_cost = as.numeric(gsub("\\$", "", median_delivery_cost)) ## median_delivery_cost is currently a characted and needs to be converted
+         )
+
+# creates two new columns 'range_min' and 'range_max' from the vol_range column. This will make joining to 
+# transactions_agg really easy
+delivery_costs_clean <- delivery_costs_clean %>% 
+  separate(vol_range, into = c("range_min", "range_max"), sep = " - ", remove=FALSE, convert=TRUE)
+
+# reassigning to delivery costs
+delivery_costs <- delivery_costs_clean
+
+# separating delivery costs for cases and gallons
+delivery_costs_cases <- delivery_costs %>%
+  filter(applicable_to == "Bottles and Cans") # cases
+
+delivery_costs_gallons <- delivery_costs %>%
+  filter(applicable_to == "Fountain") # gallons 
+
+# this first left joins the delivery costs per cases to the transactions agg
+customer_totals_yearly <- customer_totals_yearly %>%
+  left_join(delivery_costs_cases, by = "cold_drink_channel") %>%
+  filter(ordered_cases >= range_min & ordered_cases <= range_max) %>%
+  rename(cost_per_case = median_delivery_cost) %>%
+  dplyr::select(-range_min, -range_max, -applicable_to, -cost_type, -vol_range)
+
+# this left joins then the delivery costs per gallons
+customer_totals_yearly <- customer_totals_yearly %>%
+  left_join(delivery_costs_gallons, by = "cold_drink_channel") %>%
+  filter(ordered_gallons >= range_min & ordered_gallons <= range_max) %>%
+  rename(cost_per_gallon = median_delivery_cost) %>%
+  dplyr::select(-range_min, -range_max, -applicable_to,  -cost_type, -vol_range)
+
+
+
+# and then, this creates new cost variables: total cost for the year, avgerage cost per order, and average cost per gallon.
+# Average cost per gallon is the variable we will look at in the volume threshold analysis.
+customer_totals_yearly <- customer_totals_yearly %>%
+  mutate(ordered_cases_cost = cost_per_case * ordered_cases,
+         ordered_gallons_cost = cost_per_gallon * ordered_gallons,
+         total_delivery_cost = ordered_cases_cost + ordered_gallons_cost,
+         avg_cost_per_order = total_delivery_cost / total_orders,
+         avg_cost_per_gallon = total_delivery_cost / total_gallons_ordered,
+         red_truck_flag = ifelse(total_gallons_ordered >= 400, 1, 0),
+         volume_bucket = case_when(
+          total_gallons_ordered < 100 ~ "Less than 100",
+          total_gallons_ordered >= 100 & total_gallons_ordered <= 200 ~ "100-200",
+          total_gallons_ordered >= 201 & total_gallons_ordered <= 300 ~ "201-300",
+          total_gallons_ordered >= 301 & total_gallons_ordered <= 400 ~ "301-400",
+          total_gallons_ordered >= 401 & total_gallons_ordered <= 500 ~ "401-500",
+          total_gallons_ordered >= 501 & total_gallons_ordered <= 600 ~ "501-600",
+          total_gallons_ordered >= 601 & total_gallons_ordered <= 700 ~ "601-700",
+          total_gallons_ordered >= 701 & total_gallons_ordered <= 800 ~ "701-800",
+          total_gallons_ordered >= 801 & total_gallons_ordered <= 900 ~ "801-900",
+          total_gallons_ordered >= 901 & total_gallons_ordered <= 1000 ~ "901-1000",
+          total_gallons_ordered > 1000 ~ "More than 1000"
+    ))
+
+# remove unnecessary data frames from the current environment
+rm(transactions_agg, delivery_costs_cases, delivery_costs_gallons, customer_profile, address_mapping, delivery_costs, delivery_costs_clean, transactions)
+
+```
+
+Now, the analysis:
+
+Above, we bucketed customers based on their annual volume. Keep in mind, when talking about annual volume, we're talking about ORDER volume (not delivery, or load) since that's what Swire uses to determine the thresholds, at least based on the information they presented to us.
+
+Also, keep in mind that we created the variable avg_cost_per_gallon which will be used to analyze the threshold. This is not an official variable that Swire uses, but it's rather a variable the we determined would be good to determine this analysis.
+
+First, we want to find out what's the average cost per gallon by volume bucket.
+
+``` {r}
+
+customer_totals_yearly %>% 
+  filter(total_gallons_ordered > 0) %>%
+  group_by(volume_bucket) %>%
+  summarise(avg_cost_per_gallon = mean(avg_cost_per_gallon))
+
+```
+
+We can see that there is a negative linear relationship between the volumes and the avg_cost_per_gallon. As volume goes up, average cost goes down. 
+
+Here's a plot with that same information:
+
+``` {r, echo = FALSE}
+cost_summary_data <- customer_totals_yearly %>% 
+  filter(total_gallons_ordered > 0) %>%
+  group_by(volume_bucket) %>%
+  summarise(avg_cost_per_gallon = mean(avg_cost_per_gallon), .groups = "drop") %>%
+  arrange(desc(avg_cost_per_gallon))
+
+# Create the bar chart
+ggplot(cost_summary_data, aes(x = reorder(volume_bucket, avg_cost_per_gallon), y = avg_cost_per_gallon)) +
+  geom_bar(stat = "identity", fill = "#2c3e50") +
+  labs(x = "Volume Bucket", y = "Average Cost Per Gallon",
+       title = "Average Cost Per Gallon by Volume Bucket") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+rm(cost_summary_data)
+```
+
+Since Swire has set the current threshold at 400 gallons, we can see that at the 401-500 volume bucket the avg cost per gallon is around $3.66. 
+
+With that, we can make the assumption that this is the cost threshold that Swire doesn't want to cross.
+
+So, next we want to find out if there are any cold drink channels that have an annual volume of less than 400 gallons but still meet the cost threshold.
+
+``` {r}
+
+customer_totals_yearly %>% 
+  filter(total_gallons_ordered > 0) %>%
+  group_by(volume_bucket, cold_drink_channel) %>%
+  summarise(avg_cost_per_gallon = mean(avg_cost_per_gallon)) %>%
+  filter(avg_cost_per_gallon < 3.66 & volume_bucket %in% c("Less than 100", "100-200", "201-300", "301-400") ) %>%
+  arrange(desc(avg_cost_per_gallon))
+
+
+```
+
+And yes, we can see that there are 5 different volume/cold drink channel combinations that would meet the cost threshold.
+
+Therefore, the recommendation for Swire would be to not only look into the annual order volume when setting the the threshold for red truck vs. white truck, but to also make that decision based on the cold drink channel, or even look into the other variables
+
+#### 3.5.3 - Growth Potential
+
+As an initial benchmark, the variation in the volume received by customers will be used to classify them as high growth potential customers (HIGH_GROW_POT=1) or not (HIGH_GROW_POT=0).
+
+```{r}
+# Initialize new columns in the dataset
+full_data_customer$NUM_POSITIVE_SUMS <- 0
+full_data_customer$QTD_DLV_FIRST_HALF <- 0
+full_data_customer$QTD_DLV_SECOND_HALF <- 0
+full_data_customer$DIF_PERCT <- 0  # Default to 0 instead of NA
+
+# Process each customer individually
+for (i in 1:nrow(full_data_customer)) {
+  # Create a vector of positive sums while maintaining the chronological order
+  POSITIVE_SUMS <- c()
+
+  # Iterate over the 24 months in the correct sequence
+  for (j in 1:24) {
+    # Create column names
+    CA_COL <- paste0("QTD_DLV_CA_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+    GAL_COL <- paste0("QTD_DLV_GAL_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+
+    # Check if columns exist in the dataset
+    if (CA_COL %in% names(full_data_customer) && GAL_COL %in% names(full_data_customer)) {
+      CA_VALUE <- full_data_customer[[CA_COL]][i]
+      GAL_VALUE <- full_data_customer[[GAL_COL]][i]
+
+      # Replace NA with 0
+      CA_VALUE <- ifelse(is.na(CA_VALUE), 0, CA_VALUE)
+      GAL_VALUE <- ifelse(is.na(GAL_VALUE), 0, GAL_VALUE)
+
+      # Sum values for the month
+      SUM_VALUE <- CA_VALUE + GAL_VALUE
+
+      # Add to the list if positive, maintaining the natural order
+      if (SUM_VALUE > 0) {
+        POSITIVE_SUMS <- c(POSITIVE_SUMS, SUM_VALUE)
+      }
+    }
+  }
+
+  # Total number of positive operations
+  num_operations <- length(POSITIVE_SUMS)
+  full_data_customer$NUM_POSITIVE_SUMS[i] <- num_operations  # Store count of positive sums
+
+  # If fewer than 6 positive sums, set values to zero and continue
+  if (num_operations < 6) {
+    full_data_customer$QTD_DLV_FIRST_HALF[i] <- 0
+    full_data_customer$QTD_DLV_SECOND_HALF[i] <- 0
+    full_data_customer$DIF_PERCT[i] <- 0  # Ensure DIF_PERCT is also 0
+    next
+  }
+
+  # Initialize the two halves
+  QTD_DLV_FIRST_HALF <- 0
+  QTD_DLV_SECOND_HALF <- 0
+
+  # If the number of operations is even
+  if (num_operations %% 2 == 0) {
+    mid_point <- num_operations / 2
+    QTD_DLV_FIRST_HALF <- sum(POSITIVE_SUMS[1:mid_point])
+    QTD_DLV_SECOND_HALF <- sum(POSITIVE_SUMS[(mid_point + 1):num_operations])
+  } else {
+    # If odd, split the central sum correctly
+    mid_point <- (num_operations + 1) %/% 2
+    
+    # First half values
+    first_part <- POSITIVE_SUMS[1:(mid_point - 1)]
+    
+    # Split the central value
+    central_value <- POSITIVE_SUMS[mid_point] / 2
+    
+    # Second half values
+    second_part <- POSITIVE_SUMS[(mid_point + 1):num_operations]
+
+    QTD_DLV_FIRST_HALF <- sum(c(first_part, central_value))
+    QTD_DLV_SECOND_HALF <- sum(c(central_value, second_part))
+  }
+
+  # Assign values to the dataset
+  full_data_customer$QTD_DLV_FIRST_HALF[i] <- QTD_DLV_FIRST_HALF
+  full_data_customer$QTD_DLV_SECOND_HALF[i] <- QTD_DLV_SECOND_HALF
+
+  # Calculate percentage change, ensuring no NA and handling negative values
+  if (QTD_DLV_FIRST_HALF == 0 || QTD_DLV_SECOND_HALF == 0) {
+    full_data_customer$DIF_PERCT[i] <- 0  # If any half is 0, DIF_PERCT is also 0
+  } else {
+    DIF_PERCT_VALUE <- (QTD_DLV_SECOND_HALF - QTD_DLV_FIRST_HALF) / QTD_DLV_FIRST_HALF
+    full_data_customer$DIF_PERCT[i] <- ifelse(DIF_PERCT_VALUE < 0, 0, DIF_PERCT_VALUE)  # Replace negative values with 0
+  }
+}
+
+# Create the HIGH_GROW_POT column with value 0 for customers with DIF_PERCT == 0
+full_data_customer$HIGH_GROW_POT <- ifelse(full_data_customer$DIF_PERCT == 0, 0, 0)
+
+# Calculate the mean of DIF_PERCT only for values > 0
+mean_value <- mean(full_data_customer$DIF_PERCT[full_data_customer$DIF_PERCT > 0])
+
+# Display the calculated mean
+cat("Calculated mean of DIF_PERCT (excluding zero values): ", mean_value, "\n")
+
+# Assign 1 for customers with DIF_PERCT greater than the mean (for customers whose DIF_PERCT > 0)
+full_data_customer$HIGH_GROW_POT <- ifelse(full_data_customer$DIF_PERCT > mean_value, 1, full_data_customer$HIGH_GROW_POT)
+
+```
+
+The following criteria were used for this calculation:
+
+- The monthly quantities of cases and gallons delivered from January 2023 to December 2024 were summed.
+
+- Among the 24 possible values, only customers with 6 or more months of orders will be considered. Customers with fewer than 6 months of orders will not be classified as high potential.
+
+- The sums will be divided into two blocks (FIRST_HALF and SECOND_HALF), and the percentage variation will be calculated to assign the customer classification. When both blocks have a sum of zero, the customer will have `HIGH_GROW_POT = 0`. In case of an odd number of sums, the central value will be split between the two parts.
+
+- Based on the valid percentage variation, all customers showing growth above the average will be classified as high potential customers (`HIGH_GROW_POT = 1`).
+
+
+```{r, echo=FALSE, results=FALSE}
+# CHECK CODE:
+# Filter the specific customer
+customer_id <- 500823056
+customer_data <- full_data_customer[full_data_customer$CUSTOMER_NUMBER == customer_id, ]
+
+# Create a vector of positive sums while maintaining the chronological order
+POSITIVE_SUMS <- c()
+COLUMN_NAMES <- c()  # Vector to store the column names used
+
+# Iterate over the 24 months in the correct sequence
+for (j in 1:24) {
+  # Create column names
+  CA_COL <- paste0("QTD_DLV_CA_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+  GAL_COL <- paste0("QTD_DLV_GAL_", sprintf("%04d", 2023 + (j - 1) %/% 12), "_", sprintf("%02d", (j - 1) %% 12 + 1))
+
+  # Check if columns exist in the dataset
+  if (CA_COL %in% names(full_data_customer) && GAL_COL %in% names(full_data_customer)) {
+    CA_VALUE <- customer_data[[CA_COL]]
+    GAL_VALUE <- customer_data[[GAL_COL]]
+
+    # Replace NA with 0
+    CA_VALUE <- ifelse(is.na(CA_VALUE), 0, CA_VALUE)
+    GAL_VALUE <- ifelse(is.na(GAL_VALUE), 0, GAL_VALUE)
+
+    # Sum values for the month
+    SUM_VALUE <- CA_VALUE + GAL_VALUE
+
+    # Add to the list if positive, maintaining the natural order
+    if (SUM_VALUE > 0) {
+      POSITIVE_SUMS <- c(POSITIVE_SUMS, SUM_VALUE)
+      COLUMN_NAMES <- c(COLUMN_NAMES, paste(CA_COL, "+", GAL_COL))  # Save column names used
+    }
+  }
+}
+
+# Total number of positive operations
+num_operations <- length(POSITIVE_SUMS)
+
+# Initialize the two halves
+FIRST_HALF <- c()
+SECOND_HALF <- c()
+FIRST_HALF_NAMES <- c()
+SECOND_HALF_NAMES <- c()
+
+# If the number of operations is even
+if (num_operations %% 2 == 0) {
+  # If even, split into two equal halves
+  mid_point <- num_operations / 2
+  FIRST_HALF <- POSITIVE_SUMS[1:mid_point]
+  SECOND_HALF <- POSITIVE_SUMS[(mid_point + 1):num_operations]
+  FIRST_HALF_NAMES <- COLUMN_NAMES[1:mid_point]
+  SECOND_HALF_NAMES <- COLUMN_NAMES[(mid_point + 1):num_operations]
+} else {
+  # If odd, correctly split the central sum
+  mid_point <- (num_operations + 1) %/% 2
+  
+  # First sums go to FIRST_HALF
+  FIRST_HALF <- POSITIVE_SUMS[1:(mid_point - 1)]
+  FIRST_HALF_NAMES <- COLUMN_NAMES[1:(mid_point - 1)]
+  
+  # The central sum is divided between the two halves
+  central_value <- POSITIVE_SUMS[mid_point] / 2
+  FIRST_HALF <- c(FIRST_HALF, central_value)
+  SECOND_HALF <- c(central_value, POSITIVE_SUMS[(mid_point + 1):num_operations])
+  
+  # Adjust names correctly for the split central value
+  FIRST_HALF_NAMES <- c(FIRST_HALF_NAMES, COLUMN_NAMES[mid_point])
+  SECOND_HALF_NAMES <- c(COLUMN_NAMES[mid_point], COLUMN_NAMES[(mid_point + 1):num_operations])
+}
+
+# Display values correctly along with the columns used
+cat("\n--- Values that make up FIRST_HALF ---\n")
+for (i in 1:length(FIRST_HALF)) {
+  cat(FIRST_HALF_NAMES[i], " = ", FIRST_HALF[i], "\n")
+}
+
+cat("\n--- Values that make up SECOND_HALF ---\n")
+for (i in 1:length(SECOND_HALF)) {
+  cat(SECOND_HALF_NAMES[i], " = ", SECOND_HALF[i], "\n")
+}
+
+# Display the sum of the two halves
+cat("\nSum of FIRST_HALF:", sum(FIRST_HALF))
+cat("\nSum of SECOND_HALF:", sum(SECOND_HALF))
+
+# Calculate percentage change between FIRST_HALF and SECOND_HALF
+if (sum(FIRST_HALF) == 0) {
+  cat("\nPercentage Change: 0 (because FIRST_HALF is 0)\n")
+} else {
+  percentage_change <- (sum(SECOND_HALF) - sum(FIRST_HALF)) / sum(FIRST_HALF) * 100
+  cat("\nPercentage Change: ", round(percentage_change, 2), "%\n")
+}
+
+# Display the number of positive operations
+cat("\nNumber of positive operations: ", num_operations, "\n")
+
+```
+
+```{r}
+# Group and calculate the percentage of customers with HIGH_GROW_POT = 1 and 0 by LFO
+summary_high_growth <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    high_growth = sum(HIGH_GROW_POT == 1, na.rm = TRUE),
+    low_growth = sum(HIGH_GROW_POT == 0, na.rm = TRUE),
+    total_customers = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_high_growth = high_growth / total_customers * 100,
+    pct_low_growth = low_growth / total_customers * 100
+  )
+
+# Transform data into long format for percentages
+summary_high_growth_long <- summary_high_growth %>%
+  pivot_longer(
+    cols = starts_with("pct_"),
+    names_to = "growth_type",
+    values_to = "percentage"
+  ) %>%
+  mutate(
+    growth_type = factor(growth_type, 
+                         levels = c("pct_high_growth", "pct_low_growth"),
+                         labels = c("High Growth Potential", "Low Growth Potential"))
+  )
+
+# Ensure LFO is a factor
+summary_high_growth_long$LOCAL_FOUNT_ONLY <- factor(summary_high_growth_long$LOCAL_FOUNT_ONLY, levels = c("0", "1"))
+
+# Plot for percentages with the legend on the side
+ggplot(summary_high_growth_long, aes(x = LOCAL_FOUNT_ONLY, y = percentage, fill = growth_type)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(percentage, suffix = "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  labs(title = "Percentage of Customers Classified as High or Low Growth Potential") +
+  scale_fill_manual(values = c("High Growth Potential" = "#40E0D0", "Low Growth Potential" = "#FF6347")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",  # Position legend on the right side
+    legend.box = "vertical",  # Ensure vertical arrangement for the legend
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only")) +
+  guides(fill = guide_legend(title = "Growth Potential"))  # Add a legend title
+
+# Group and calculate the number of customers with HIGH_GROW_POT = 1 and 0 by LFO
+summary_high_growth <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    high_growth = sum(HIGH_GROW_POT == 1, na.rm = TRUE),
+    low_growth = sum(HIGH_GROW_POT == 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Display the summary with the count of customers
+#summary_high_growth
+
+
+```
+
+Approximately 9% of customers (123) identified as local market partners who purchase fountain-only products show high growth potential according to the established criteria. For other customers, about 12% (3450) are classified as having high growth potential.
+
+Please note that these numbers are provided as an initial reference.
+
+This part of the growth analysis looks to see which trade channels have the highest median and mean growth rate. This analysis uses the full_data dataset and any customer with at least two months of transactions was included in this analysis. 
+
+```{r}
+
+calculate_customer_growth_rates <- function(df) {
+  # Convert transaction date to Date type
+  df$TRANSACTION_DATE <- as.Date(df$TRANSACTION_DATE)
+  
+  # Create monthly aggregations per customer
+  monthly_volume <- df %>%
+    mutate(MONTH_END = ceiling_date(TRANSACTION_DATE, "month") - days(1)) %>%
+    group_by(CUSTOMER_NUMBER, MONTH_END) %>%
+    summarise(
+      DELIVERED_CASES = sum(DELIVERED_CASES),
+      DELIVERED_GALLONS = sum(DELIVERED_GALLONS),
+      TRADE_CHANNEL = first(TRADE_CHANNEL),
+      .groups = "drop"
+    )
+  
+  # Calculate growth rates for each customer
+  growth_rates <- lapply(unique(monthly_volume$CUSTOMER_NUMBER), function(customer) {
+    customer_data <- monthly_volume %>%
+      filter(CUSTOMER_NUMBER == customer) %>%
+      arrange(MONTH_END)
+    
+    # Need at least 2 months of data to calculate growth
+    if (nrow(customer_data) >= 2) {
+      first_period <- customer_data$DELIVERED_CASES[1]
+      last_period <- customer_data$DELIVERED_CASES[nrow(customer_data)]
+      num_periods <- nrow(customer_data) - 1
+      
+      # Calculate growth rate with error handling
+      monthly_growth_rate <- tryCatch({
+        if (first_period <= 0 || last_period <= 0) {
+          NA_real_
+        } else {
+          growth <- (((last_period / first_period)^(1/num_periods)) - 1) * 100
+          if (is.finite(growth)) growth else NA_real_
+        }
+      }, error = function(e) NA_real_)
+      
+      list(
+        CUSTOMER_NUMBER = customer,
+        GROWTH_RATE = monthly_growth_rate,
+        MONTHS_OF_DATA = nrow(customer_data),
+        AVERAGE_MONTHLY_CASES = mean(customer_data$DELIVERED_CASES),
+        TOTAL_CASES = sum(customer_data$DELIVERED_CASES),
+        FIRST_MONTH_CASES = first_period,
+        LAST_MONTH_CASES = last_period,
+        TRADE_CHANNEL = customer_data$TRADE_CHANNEL[1]
+      )
+    }
+  })
+  
+  # Convert list to dataframe
+  growth_df <- do.call(rbind.data.frame, growth_rates) %>%
+    as_tibble()
+  
+  # Add rankings
+  growth_df <- growth_df %>%
+    mutate(
+      OVERALL_RANK = rank(-GROWTH_RATE, na.last = "keep"),
+      TRADE_CHANNEL_RANK = ave(-GROWTH_RATE, 
+                              TRADE_CHANNEL, 
+                              FUN = function(x) rank(x, na.last = "keep")),
+      VALID_GROWTH_RATE = !is.na(GROWTH_RATE)
+    ) %>%
+    arrange(desc(GROWTH_RATE))
+  
+  return(growth_df)
+}
+
+summarize_growth_rankings <- function(growth_df) {
+  # Filter to only valid growth rates for statistics
+  valid_growth <- growth_df %>%
+    filter(VALID_GROWTH_RATE)
+  
+  # Calculate overall statistics
+  overall_stats <- list(
+    median_growth_rate = median(valid_growth$GROWTH_RATE, na.rm = TRUE),
+    mean_growth_rate = mean(valid_growth$GROWTH_RATE, na.rm = TRUE),
+    top_quartile_growth = quantile(valid_growth$GROWTH_RATE, 0.75, na.rm = TRUE),
+    bottom_quartile_growth = quantile(valid_growth$GROWTH_RATE, 0.25, na.rm = TRUE),
+    total_customers = nrow(growth_df),
+    customers_with_valid_growth = nrow(valid_growth),
+    customers_with_invalid_growth = nrow(growth_df) - nrow(valid_growth)
+  )
+  
+  # Calculate trade channel statistics
+  trade_channel_stats <- valid_growth %>%
+    group_by(TRADE_CHANNEL) %>%
+    summarise(
+      mean_growth = mean(GROWTH_RATE, na.rm = TRUE),
+      median_growth = median(GROWTH_RATE, na.rm = TRUE),
+      count = n(),
+      total_cases = sum(TOTAL_CASES),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(mean_growth))  # Sort by mean_growth in descending order
+  
+  return(list(
+    overall_stats = overall_stats,
+    by_trade_channel = trade_channel_stats
+  ))
+}
+
+# Example usage:
+growth_analysis <- calculate_customer_growth_rates(full_data)
+
+# Get summary statistics
+summary_growth <- summarize_growth_rankings(growth_analysis)
+
+# Print only the trade channel statistics
+print(summary_growth$by_trade_channel)
+
+```
+
+#### 3.5.4 - Fleet Assignment
+
+Customers who exceed 400 units annually or exhibit high growth potential will be assigned to Red Trucks, while the remaining customers will be allocated to White Trucks.
+
+```{r}
+# Create the FLEET_TYPE column based on THRESHOLD_REACH and HIGH_GROW_POT
+full_data_customer$FLEET_TYPE <- ifelse(full_data_customer$THRESHOLD_REACH == 1, 
+                                         "RED TRUCK", 
+                                         ifelse(full_data_customer$HIGH_GROW_POT == 1, 
+                                                "RED TRUCK", 
+                                                "WHITE TRUCK"))
+
+# Group and calculate the number of customers by FLEET_TYPE and LOCAL_FOUNT_ONLY
+summary_fleet_type <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_customers = n(),
+    .groups = "drop"
+  )
+
+# Calculate percentage of customers within each LOCAL_FOUNT_ONLY group separately
+summary_fleet_type <- summary_fleet_type %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  mutate(
+    pct_customers = total_customers / sum(total_customers) * 100  # Calculate the percentage within each LOCAL_FOUNT_ONLY group
+  )
+
+# Transform data into long format for percentages
+summary_fleet_type_long <- summary_fleet_type %>%
+  pivot_longer(
+    cols = starts_with("pct_"),
+    names_to = "metric",
+    values_to = "percentage"
+  ) %>%
+  mutate(
+    metric = factor(metric, 
+                    levels = c("pct_customers"),
+                    labels = c("Percentage of Customers"))
+  )
+
+# Ensure LOCAL_FOUNT_ONLY and FLEET_TYPE are factors
+summary_fleet_type_long$LOCAL_FOUNT_ONLY <- factor(summary_fleet_type_long$LOCAL_FOUNT_ONLY, levels = c("0", "1"))
+summary_fleet_type_long$FLEET_TYPE <- factor(summary_fleet_type_long$FLEET_TYPE, levels = c("RED TRUCK", "WHITE TRUCK"))
+
+# Plot for percentages with FLEET_TYPE as colors and LOCAL_FOUNT_ONLY as groups
+ggplot(summary_fleet_type_long, aes(x = LOCAL_FOUNT_ONLY, y = percentage, fill = FLEET_TYPE)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(percentage, suffix = "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  labs(title = "Percentage of Customers by Fleet Type and Local Fountain Only") +
+  scale_fill_manual(values = c("RED TRUCK" = "#B33951", "WHITE TRUCK" = "#D3D3D3")) +  # Set colors for RED and WHITE TRUCK
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",  # Position legend on the right side
+    legend.box = "vertical",  # Ensure vertical arrangement for the legend
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only")) +
+  guides(fill = guide_legend(title = "Fleet Type"))  # Add a legend title
+
+# Group and calculate the number of customers by FLEET_TYPE and LOCAL_FOUNT_ONLY
+summary_fleet_type_count <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_customers = n(),
+    .groups = "drop"
+  )
+
+# Display the summary with the count of customers by fleet type and LOCAL_FOUNT_ONLY
+#summary_fleet_type_count
+
+```
+
+According to these criteria, 22% (295 out of 1,359) of Local Fountain Only customers would be assigned to RED TRUCK. Among the other customers, 34% (9,932 out of 28,961) would receive deliveries via RED TRUCK.
+
+```{r}
+# Group by LOCAL_FOUNT_ONLY and FLEET_TYPE, then calculate the total delivered volume (QTD_DLV_TOTAL)
+summary_fleet_type_total <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_QTD_DLV = sum(QTD_DLV_TOTAL, na.rm = TRUE),  # Sum of QTD_DLV_TOTAL for each FLEET_TYPE and LOCAL_FOUNT_ONLY
+    .groups = "drop"
+  )
+
+# Ensure LOCAL_FOUNT_ONLY and FLEET_TYPE are factors for better plotting
+summary_fleet_type_total$LOCAL_FOUNT_ONLY <- factor(summary_fleet_type_total$LOCAL_FOUNT_ONLY, levels = c("0", "1"))
+summary_fleet_type_total$FLEET_TYPE <- factor(summary_fleet_type_total$FLEET_TYPE, levels = c("RED TRUCK", "WHITE TRUCK"))
+
+# Plot the total delivered volume (QTD_DLV_TOTAL) by FLEET_TYPE and LOCAL_FOUNT_ONLY
+ggplot(summary_fleet_type_total, aes(x = LOCAL_FOUNT_ONLY, y = total_QTD_DLV, fill = FLEET_TYPE)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(total_QTD_DLV)), 
+            position = position_dodge(width = 0.8), vjust = 0.0, size = 3.5) +
+  labs(title = "Total Delivered Volume by Fleet Type and Local Fountain Only") +
+  scale_fill_manual(values = c("RED TRUCK" = "#B33951", "WHITE TRUCK" = "#D3D3D3")) +  # Set colors for RED and WHITE TRUCK
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",  # Position legend on the right side
+    legend.box = "vertical",  # Ensure vertical arrangement for the legend
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only")) +
+  guides(fill = guide_legend(title = "Fleet Type"))  # Add a legend title
+
+# Group and calculate the total delivered volume (QTD_DLV_TOTAL) by FLEET_TYPE and LOCAL_FOUNT_ONLY
+summary_fleet_type_count <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_QTD_DLV = sum(QTD_DLV_TOTAL, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Display the summary with the total delivered volume by FLEET_TYPE and LOCAL_FOUNT_ONLY
+#summary_fleet_type_count
+
+```
+
+The vast majority of the volume would be delivered by RED TRUCK (86.5% of the total - 31,208,936), with the remaining portion delivered by WHITE TRUCK (13.5% - 4,885,335).
+
+```{r}
+# Group by LOCAL_FOUNT_ONLY and FLEET_TYPE and calculate total delivered volume (QTD_DLV_TOTAL)
+summary_fleet_type_pct <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_QTD_DLV = sum(QTD_DLV_TOTAL, na.rm = TRUE),  # Sum of QTD_DLV_TOTAL for each FLEET_TYPE and LOCAL_FOUNT_ONLY
+    .groups = "drop"
+  ) %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  mutate(
+    pct_QTD_DLV = total_QTD_DLV / sum(total_QTD_DLV) * 100  # Calculate the percentage of delivered volume per LOCAL_FOUNT_ONLY group
+  )
+
+# Ensure LOCAL_FOUNT_ONLY and FLEET_TYPE are factors for better plotting
+summary_fleet_type_pct$LOCAL_FOUNT_ONLY <- factor(summary_fleet_type_pct$LOCAL_FOUNT_ONLY, levels = c("0", "1"))
+summary_fleet_type_pct$FLEET_TYPE <- factor(summary_fleet_type_pct$FLEET_TYPE, levels = c("RED TRUCK", "WHITE TRUCK"))
+
+# Plot the percentage of delivered volume (QTD_DLV_TOTAL) by FLEET_TYPE and LOCAL_FOUNT_ONLY
+ggplot(summary_fleet_type_pct, aes(x = LOCAL_FOUNT_ONLY, y = pct_QTD_DLV, fill = FLEET_TYPE)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = paste0(round(pct_QTD_DLV, 1), "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.0, size = 3.5) +
+  labs(title = "Percentage of Delivered Volume by Fleet Type and Local Fountain Only") +
+  scale_fill_manual(values = c("RED TRUCK" = "#B33951", "WHITE TRUCK" = "#D3D3D3")) +  # Set colors for RED and WHITE TRUCK
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",  # Position legend on the right side
+    legend.box = "vertical",  # Ensure vertical arrangement for the legend
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only")) +
+  guides(fill = guide_legend(title = "Fleet Type"))  # Add a legend title
+
+# Group and calculate the percentage of delivered volume (QTD_DLV_TOTAL) by FLEET_TYPE and LOCAL_FOUNT_ONLY
+summary_fleet_type_count_pct <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY, FLEET_TYPE) %>%
+  summarise(
+    total_QTD_DLV = sum(QTD_DLV_TOTAL, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  mutate(
+    pct_QTD_DLV = total_QTD_DLV / sum(total_QTD_DLV) * 100  # Percentage of delivered volume within each group
+  )
+
+# Display the summary with the percentage of delivered volume by FLEET_TYPE and LOCAL_FOUNT_ONLY
+#summary_fleet_type_count_pct
+
+```
+
+Considering the customer groups independently, nearly 63% of the volume delivered to local partners purchasing fountain only would be transported by RED TRUCKS, while for the remaining customers, almost 87% of the volume would be delivered by RED TRUCKS.
+
+### 3.6 - Questions and Considerations on Missing Data and Unknown Classes
+
+After the first portion of EDA, our group has a better idea of the data that we are working with, but not all of our questions have been answered. We will continue to explore these in the next section, but some questions may still remain even after more digging due to the nature of the questions. We thought it valuable to list these questions here.
+
+- Based on the available data, what would be a robust statistical approach to calculate the customer growth rate? We initially used a simplistic approach, relying on the average as a reference to visualize the data. However, a more validated method could certainly be applied.
+
+- What is the average load capacity of a Red Truck compared to a White Truck?
+
+- We need to better understand the meaning of the sub trade channel class FSR MISC, as it accounts for 15.6% of all transactions.
+
+- Is the relative cost of a White Truck higher or lower than that of a Red Truck? What is the average percentage difference?
+
+- Getting an id for individual Swire account executives added to the customer profile data would be interesting. Is the quality of the account executive a confounding variable when looking at high growth rate customers?
+
+- Does SCCU set a delivery deadline in days or hours?
+
+
+## 4. Exploratory Data Analysis (EDA) - Part II
+
+```{r, echo=FALSE, results=FALSE}
+# Save the data for a faster process
+
+# Save the full_data data frame
+#write.csv(full_data, file = "D:/Analytics Projects/SCCU/data/full_data.csv", row.names = FALSE)
+
+# Save the full_data_customer data frame
+#write.csv(full_data_customer, file = "D:/Analytics Projects/SCCU/data/full_data_customer.csv", row.names = FALSE)
+
+
+# Load the full_data CSV
+#full_data <- read.csv(file = "D:/Analytics Projects/SCCU/data/full_data.csv", 
+#                      sep = ",", 
+#                      stringsAsFactors = FALSE)
+
+# Load the full_data_customer CSV
+#full_data_customer <- read.csv(file = "D:/Analytics Projects/SCCU/data/full_data_customer.csv", 
+#                                sep = ",", 
+#                                stringsAsFactors = FALSE)
+
+# Define the extended custom color palette
+custom_palette_extended <- c(
+  "#F4EBE8", "#8ED081", "#8ED081", "#ABD2FA", "#A7ADC6", "#B33951",  
+  "#FFD700", "#FF6347", "#20B2AA", "#87CEEB", "#D3D3D3", "#FF8C00",   
+  "#32CD32", "#6A5ACD", "#FF1493", "#40E0D0", "#FF4500", "#D2691E"
+)
+```
+
+After completing the initial analysis and building the datasets, focusing on the set objectives, we will explore more detailed information about the customers.
+
+
+### 4.1 Customers overview
+
+**Geographical Distribution of Customers**
+
+Although the location data is not real, below you can observe its distribution.
+
+```{r}
+# Load the U.S. map
+us_map <- map_data("state")
+
+# Create the plot
+ggplot() +
+  geom_polygon(data = us_map, aes(x = long, y = lat, group = group),
+               fill = "lightblue", color = "white") +
+  geom_point(data = full_data_customer, aes(x = LONGITUDE, y = LATITUDE),
+             color = "#B33951", alpha = 0.6, size = 0.5) +
+  coord_fixed(1.3) +
+  theme_minimal() +
+  labs(title = "SCCU Customers Geographical Distribution") +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+```
+
+```{r, results=FALSE}
+# Calculate the number of unique customers
+unique_customers <- length(unique(full_data_customer$CUSTOMER_NUMBER))
+
+# Display the frequency of each value for the 'CHAIN_MEMBER' column
+chain_member_count <- table(full_data_customer$CHAIN_MEMBER)
+
+# Calculate the number of unique primary group numbers
+unique_primary_groups <- length(unique(full_data_customer$PRIMARY_GROUP_NUMBER))
+
+# Sum the costs for cases and gallons in 2023 and 2024
+cost_dlv <- sum(full_data_customer$COST_CA_23, full_data_customer$COST_CA_24, 
+                full_data_customer$COST_GAL_23, full_data_customer$COST_GAL_24, 
+                na.rm = TRUE)
+
+# Summing the number of transactions for cases and gallons in 2023 and 2024
+trans_dlv <- sum(full_data_customer$NUM_TRANS_DLV_CA_23, full_data_customer$NUM_TRANS_DLV_CA_24, 
+                 full_data_customer$NUM_TRANS_DLV_GAL_23, full_data_customer$NUM_TRANS_DLV_GAL_24, 
+                 na.rm = TRUE)
+
+# Summing the quantity delivered of cases and gallons in 2023 and 2024
+qtd_dlv <- sum(
+  full_data_customer$QTD_DLV_CA_2023, full_data_customer$QTD_DLV_GAL_2023,
+  full_data_customer$QTD_DLV_CA_2024, full_data_customer$QTD_DLV_GAL_2024,
+  na.rm = TRUE
+)
+
+# Average cost per delivery transaction
+avg_cost_per_transaction <- cost_dlv / trans_dlv
+
+# Average cost per case or gallon delivered
+avg_cost_per_quantity <- cost_dlv / qtd_dlv
+
+# Display results
+unique_customers  # Number of unique customers
+chain_member_count  # Frequency count of each chain member
+unique_primary_groups  # Number of unique primary group numbers
+cost_dlv  # Total cost for cases and gallons in 2023 and 2024
+trans_dlv  # Total number of transactions for cases and gallons in 2023 and 2024
+avg_cost_per_transaction  # Average cost per delivery transaction
+avg_cost_per_quantity  # Average cost per case or gallon delivered
+
+```
+
+After removing customers who did not make any transactions in 2023 and 2024, there are  
+**30,320 unique customers** who made transactions during these years.  
+Of these, **18,061 are unique outlets**, while **12,259 belong to 1,020 different chains** that have transacted with SCCU.
+
+All of their delivery transactions represented a total cost of approximately **$67,907,394**,  
+with an average of **$55.8 per delivery transaction** and **$1.88 per case or gallon delivered**.
+
+
+### 4.2 Local Market Partners (Fountain Only)
+```{r}
+# Clean
+clean_data <- full_data %>%
+  filter(!is.na(LOCAL_FOUNT_ONLY)) %>%  # Filtering data where LOCAL_FOUNT_ONLY is not NA
+  mutate(LOCAL_FOUNT_ONLY = factor(LOCAL_FOUNT_ONLY, levels = c("0", "1")))  # Converting to factor
+
+# Aggregate data by LOCAL_FOUNT_ONLY and create the plot
+summary_data <- clean_data %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    customers = n_distinct(CUSTOMER_NUMBER),
+    transactions = n(),
+    qtd_cas = sum(DELIVERED_CASES, na.rm = TRUE),
+    qtd_gal = sum(DELIVERED_GALLONS, na.rm = TRUE),
+    total_qtd = qtd_cas + qtd_gal,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_cust = customers / sum(customers) * 100,
+    pct_trans = transactions / sum(transactions) * 100,
+    pct_qtd = total_qtd / sum(total_qtd) * 100,
+    pct_gal = qtd_gal / sum(qtd_gal) * 100
+  ) %>%
+  rename(LFO = LOCAL_FOUNT_ONLY)
+
+# Transform data to long format
+summary_data_long <- summary_data %>%
+  pivot_longer(cols = starts_with("pct_"), names_to = "metric", values_to = "percentage") %>%
+  mutate(
+    metric = factor(metric, 
+                    levels = c("pct_cust", "pct_trans", "pct_gal", "pct_qtd"),
+                    labels = c("Customers", "Delivery Transactions", "Gallons", "Total (Cases+Gallons)"))
+  )
+
+# Convert LFO to factor
+summary_data_long$LFO <- factor(summary_data_long$LFO, levels = c("0", "1"))
+
+# Create the plot
+ggplot(summary_data_long, aes(x = LFO, y = percentage, fill = LFO)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  facet_wrap(~ metric, scales = "fixed", ncol = 2) +
+  labs(title = "Percentage Breakdown by Consumption Pattern") +
+  scale_fill_manual(values = c("0" = "#8ED081", "1" = "#A7ADC6")) +
+  scale_y_continuous(labels = percent_format(scale = 1)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only"))
+```
+
+Local market partners who purchase only fountain drinks (Gallons) account for 4.5% of the customers and represent 6% of the company's demand. Their delivery transaction volume is low, contributing only 3%, and the volume delivered accounts for just 1.6% of the total negotiated volume.
+
+```{r}
+# Group and calculate sums and percentages
+summary_full_data <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    total_cost_gal = sum(COST_GAL_23, na.rm = TRUE) + sum(COST_GAL_24, na.rm = TRUE),
+    total_cost_ca = sum(COST_CA_23, na.rm = TRUE) + sum(COST_CA_24, na.rm = TRUE),
+    total_cost_all = total_cost_gal + total_cost_ca,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_cost_gal = total_cost_gal / total_cost_all * 100,
+    pct_cost_ca = total_cost_ca / total_cost_all * 100,
+    pct_total = total_cost_all / sum(total_cost_all) * 100
+  ) %>%
+  rename(LFO = LOCAL_FOUNT_ONLY)
+
+# Transform data into long format for totals
+summary_full_data_long <- summary_full_data %>%
+  pivot_longer(
+    cols = starts_with("total_"), 
+    names_to = "metric", 
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = factor(metric, 
+                    levels = c("total_cost_gal", "total_cost_ca", "total_cost_all"),
+                    labels = c("Cost Gallons (23 & 24)", "Cost Cases (23 & 24)", "Total Cost"))
+  )
+
+# For percentages
+summary_full_data_pct_long <- summary_full_data %>%
+  pivot_longer(
+    cols = starts_with("pct_"), 
+    names_to = "metric", 
+    values_to = "percentage"
+  ) %>%
+  mutate(
+    metric = factor(metric, 
+                    levels = c("pct_cost_gal", "pct_cost_ca", "pct_total"),
+                    labels = c("Percentage Cost Gallons (23 & 24)", "Percentage Cost Cases (23 & 24)", "Percentage Total Cost"))
+  )
+
+# Ensure LFO is a factor
+summary_full_data_long$LFO <- factor(summary_full_data_long$LFO, levels = c("0", "1"))
+
+# Plot for total costs
+ggplot(summary_full_data_long, aes(x = LFO, y = value, fill = LFO)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(value, prefix = "$")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  facet_wrap(~ metric, scales = "fixed", nrow = 1) +  # Escala do eixo y fixa
+  labs(title = "Total Costs by Consumption Pattern") +
+  scale_fill_manual(values = c("0" = "#8ED081", "1" = "#A7ADC6")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only"))
+```
+
+In the years 2023 and 2024, the total delivery cost was 67.9 million, of which only 1.2 million was allocated to local market partners.
+
+```{r}
+# Group and calculate sums and percentages by LFO
+summary_full_data <- full_data_customer %>%
+  group_by(LOCAL_FOUNT_ONLY) %>%
+  summarise(
+    total_cost_gal = sum(COST_GAL_23, na.rm = TRUE) + sum(COST_GAL_24, na.rm = TRUE),
+    total_cost_ca = sum(COST_CA_23, na.rm = TRUE) + sum(COST_CA_24, na.rm = TRUE),
+    total_cost_all = total_cost_gal + total_cost_ca,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_cost_gal = total_cost_gal / sum(total_cost_gal) * 100,  
+    pct_cost_ca = total_cost_ca / sum(total_cost_ca) * 100,      
+    pct_total = total_cost_all / sum(total_cost_all) * 100        
+  ) %>%
+  rename(LFO = LOCAL_FOUNT_ONLY)
+
+# Transform data into long format for percentages
+summary_full_data_pct_long <- summary_full_data %>%
+  pivot_longer(
+    cols = starts_with("pct_"), 
+    names_to = "metric", 
+    values_to = "percentage"
+  ) %>%
+  mutate(
+    metric = factor(metric, 
+                    levels = c("pct_cost_gal", "pct_cost_ca", "pct_total"),
+                    labels = c("Percentage Cost Gallons (23 & 24)", "Percentage Cost Cases (23 & 24)", "Percentage Total Cost"))
+  )
+
+# Ensure LFO is a factor
+summary_full_data_pct_long$LFO <- factor(summary_full_data_pct_long$LFO, levels = c("0", "1"))
+
+# Plot for percentages
+ggplot(summary_full_data_pct_long, aes(x = LFO, y = percentage, fill = LFO)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = scales::comma(percentage, suffix = "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  facet_wrap(~ metric, scales = "fixed", nrow = 1) +  # Escala do eixo y fixa
+  labs(title = "Percentage Costs by Consumption Pattern") +
+  scale_fill_manual(values = c("0" = "#8ED081", "1" = "#A7ADC6")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 10, face = "bold"),
+    strip.background = element_blank(),
+    axis.text.x = element_text(size = 10),
+    panel.spacing = unit(1, "lines"),
+    strip.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Others", "1" = "Local Fountain Only"))
+
+```
+
+Thus, in 2023 and 2024, the local partners who consume only fountain accounted for 1.8% of the total delivery costs. When we look at their share specifically in gallon deliveries, their participation rises to 7.3%.
+
+
+### 4.3 Customers History
+
+Below is the chart showing the density of customers in relation to the start of their partnership and their first delivery.
+
+```{r}
+# Gather the data for ON_BOARDING_DATE and FIRST_DELIVERY_DATE, filtering out 2025 data
+profile_data_long <- profile_data %>%
+  filter(!is.na(ON_BOARDING_DATE) & !is.na(FIRST_DELIVERY_DATE)) %>%
+  # Filter out 2025 data to avoid showing deliveries in that year
+  filter(format(FIRST_DELIVERY_DATE, "%Y") != "2025") %>%
+  pivot_longer(cols = c(ON_BOARDING_DATE, FIRST_DELIVERY_DATE), 
+               names_to = "Event", values_to = "Date") %>%
+  # Set factor levels to ensure ON_BOARDING_DATE appears first in the plot
+  mutate(Event = factor(Event, levels = c("ON_BOARDING_DATE", "FIRST_DELIVERY_DATE")))
+
+# Create density plots with facet_wrap
+ggplot(profile_data_long, aes(x = Date, fill = Event, color = Event)) +
+  geom_density(alpha = 0.5) +  # Adjust transparency for better visualization
+  facet_wrap(~ Event, scales = "free", ncol = 2) +  # Create facets for each variable
+  labs(title = "Density Plots of Onboarding and First Delivery Dates",
+       x = "Date",
+       y = "Density") +
+  scale_fill_manual(values = c("steelblue", "orange")) +  # Set custom colors (first delivery = orange)
+  scale_color_manual(values = c("steelblue", "orange")) +
+  scale_y_continuous(labels = scales::label_number()) +  # Remove scientific notation on Y axis
+  theme_minimal() +
+  theme(legend.position = "none")  # Remove the legend for a cleaner plot
+
+```
+
+The vast majority of customers started to appear after 2010. The figures for the first deliveries show that, since 2016, at least 2,000 customers have received their first delivery each year. There were peaks in 2016 and 2017. In 2024, there was a decrease in the number of customers receiving their first delivery compared to 2023.
+
+```{r, warning=FALSE}
+# Reshape data: Gather ON_BOARDING_DATE and FIRST_DELIVERY_DATE
+profile_data_long <- profile_data %>%
+  filter(!is.na(ON_BOARDING_DATE) & !is.na(FIRST_DELIVERY_DATE)) %>%
+  pivot_longer(cols = c(ON_BOARDING_DATE, FIRST_DELIVERY_DATE), 
+               names_to = "Event", values_to = "Date")
+
+# Set factor levels to ensure ON_BOARDING_DATE appears first in the plot
+profile_data_long$Event <- factor(profile_data_long$Event, levels = c("ON_BOARDING_DATE", "FIRST_DELIVERY_DATE"))
+
+# Ensure Date is in Date format
+profile_data_long$Date <- as.Date(profile_data_long$Date)
+
+# Create histograms with yearly aggregation
+ggplot(profile_data_long, aes(x = Date, fill = Event)) +
+  geom_histogram(binwidth = 365, color = "black", alpha = 0.5, position = "identity") +  
+  facet_wrap(~ Event, scales = "free_x", ncol = 2) +  # Free scaling for X axis
+  labs(title = "Distribution of Customer Onboarding and First Delivery Dates",
+       x = "Date",
+       y = "Count") +
+  scale_fill_manual(values = c("steelblue", "orange")) +  # Custom colors for events
+  scale_x_date(labels = scales::date_format("%Y"), expand = c(0.01, 0.01)) +  # Show only year on X-axis
+  scale_y_continuous(labels = scales::label_number()) +  # Ensure the y-axis is not in scientific notation
+  theme_minimal() +
+theme(legend.position = "none",  # Remove legend
+        axis.text.x = element_text(hjust = -0.1),  
+        axis.ticks.x = element_blank(),  
+        panel.grid.major.x = element_blank(),  # Remove vertical gridlines
+        panel.grid.minor.x = element_blank())  # Remove minor vertical gridlines
+
+```
+
+
+### 4.4 Order Types
+
+The way orders are placed and by whom can be crucial to understanding the growth potential of customers. The vast majority of customer registrations are associated with sales representatives (65.7%). Other methods come in second with 17.6%. MyCoke 360 ranks third with nearly 8%, though it was only recently launched in Summer 2024, replacing orders placed through MyCoke Legacy.
+
+```{r, fig.width=6, fig.height=3}
+# Load necessary library
+library(RColorBrewer)
+
+# Summary data by FREQUENT_ORDER_TYPE
+data_summary_order_type <- full_data_customer %>%
+  group_by(FREQUENT_ORDER_TYPE) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+# Define the custom color palette (Neutral colors from RColorBrewer's "Set3")
+custom_palette <- brewer.pal(6, "Set3")  # A 6-color palette from Set3
+
+# Create the horizontal bar chart with percentages
+ggplot(data_summary_order_type, aes(x = Count, y = reorder(FREQUENT_ORDER_TYPE, Count), fill = FREQUENT_ORDER_TYPE)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.6) +  
+  geom_text(aes(label = paste(Percentage, "%")), 
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Observations by Frequent Order Type", x = NULL, y = NULL) +  
+  scale_x_continuous(labels = NULL, expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette) +  
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),  
+        legend.position = "none",  
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())  
+ 
+
+
+```
+
+The previous order type information is unique to each customer in the customer profile.
+Below, I will display the percentages of occurrences in 2023 and 2024 by order type, focusing only on the transactions that took place in 2023 and 2024.
+
+```{r}
+# Summarize data by FREQUENT_ORDER_TYPE and LOCAL_FOUNT_ONLY
+data_summary_order_type <- full_data %>%
+  group_by(ORDER_TYPE, LOCAL_FOUNT_ONLY) %>%
+  summarise(Count = n(), .groups = 'drop') %>%  # Add .groups = 'drop' to avoid the grouping message
+  mutate(Percentage = round(Count / sum(Count) * 100, 1),
+         Percentage = ifelse(Percentage < 0.15, NA, Percentage))  # Set values less than 0.15% to NA (not displayed)
+
+# Create the horizontal bar chart with percentages, considering LOCAL_FOUNT_ONLY as the grouping variable
+ggplot(data_summary_order_type, aes(x = Count, y = reorder(ORDER_TYPE, Count), fill = as.factor(LOCAL_FOUNT_ONLY))) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = ifelse(!is.na(Percentage), paste(Percentage, "%"), "")),  # Only display text if Percentage is not NA
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Transactions by Frequent Order Type and Local Fount Only",
+       x = NULL, 
+       y = NULL) +  
+  scale_x_continuous(labels = NULL, expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = c("#8ED081", "#A7ADC6"), name = "Local Fount Only") +  # Custom color for LOCAL_FOUNT_ONLY
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),  
+        legend.position = "right", 
+        legend.direction = "vertical", 
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+In the transactions of 2023 and 2024, it is clear that most operations were carried out by MyCoke Legacy (31.6%), followed by call centers (28.5%) and sales representatives (25.7%). MyCoke360, which was recently launched, accounts for 7.3% of the transactions.
+
+Interestingly, only a very small percentage refers to Local Fountain Only (LFO=1) customers. Additionally, "Others" represents 0.1% of the orders executed by local customers, but these were not displayed due to legibility issues.
+
+```{r}
+# Summarize the data by FLEET_TYPE and the specified columns
+data_summary_fleet_type <- full_data_customer %>%
+  dplyr::select(FLEET_TYPE, contains("OT_")) %>%  # Select only FLEET_TYPE and columns containing "OT_"
+  gather(key = "Order_Type", value = "Count", -FLEET_TYPE) %>%  # Reshape the data into long format
+  group_by(FLEET_TYPE, Order_Type) %>%  # Group by FLEET_TYPE and Order_Type
+  summarise(Count = sum(Count, na.rm = TRUE), .groups = 'drop') %>%  # Calculate total count for each combination
+  group_by(Order_Type) %>%  # Group by Order_Type to calculate percentage within each Order_Type
+  mutate(Percentage = round(Count / sum(Count) * 100, 0))  # Calculate percentage within each Order_Type
+
+# Create the horizontal bar chart with percentages
+ggplot(data_summary_fleet_type, aes(x = Count, y = reorder(Order_Type, Count), fill = FLEET_TYPE)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.6) +  
+  geom_text(aes(label = paste(Percentage, "%")), 
+            position = position_stack(vjust = 0.5), 
+            hjust = 0, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Transactions by Order Type and Fleet Type", x = NULL, y = NULL) +  
+  scale_x_continuous(labels = NULL, expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = c("RED TRUCK" = "#B33951", "WHITE TRUCK" = "#D3D3D3")) +  # Custom color for FLEET_TYPE
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),  
+        legend.position = "right", 
+        legend.direction = "vertical", 
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())  
+
+```
+
+### 4.4 Channel Types
+
+```{r, echo=FALSE, results=FALSE}
+# Summarize data by COLD_DRINK_CHANNEL and LOCAL_FOUNT_ONLY
+data_summary_cold_drink_channel <- full_data %>%
+  group_by(COLD_DRINK_CHANNEL, LOCAL_FOUNT_ONLY) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+# Print the summary table
+data_summary_cold_drink_channel
+
+```
+
+More than 50% of transactions were made through the DINING channel, followed by GOODS (16.6%), EVENTS (9.2%), and BULK TRADE (8.4%). The remaining channels each represent less than 5% of the total.
+
+Transactions for Local Partners Fountain Only are almost entirely concentrated in DINING, with 2.7% of transactions compared to 47.8% for other channels.
+
+```{r}
+# Calculate the frequency of each COLD_DRINK_CHANNEL
+data_summary_cold_drink_channel <- full_data %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+
+# Create a horizontal bar chart with percentages for COLD_DRINK_CHANNEL
+ggplot(data_summary_cold_drink_channel, aes(x = Count, y = reorder(COLD_DRINK_CHANNEL, Count), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = ifelse(!is.na(Percentage), paste(Percentage, "%"), "")),  # Only display text if Percentage is not NA
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Transactions by Cold Drink Channel",
+       x = NULL, 
+       y = NULL) +  
+  scale_x_continuous(labels = NULL, expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette_extended) +  # Use your custom color palette
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),  
+        legend.position = "none",  # Remove the legend
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+#### 4.4.1 Cases and Gallons delivered by Channel
+
+```{r}
+# Summarize data by COLD_DRINK_CHANNEL, summing the quantities of cases (QTD_DLV_CA_2023 and QTD_DLV_CA_2024)
+data_summary_cases <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Cases = sum(QTD_DLV_CA_2023, na.rm = TRUE) + sum(QTD_DLV_CA_2024, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Percentage = round(Total_Cases / sum(Total_Cases) * 100, 1))  # Calculate the percentage
+
+# Create a bar chart for the percentage of total cases by cold drink channel
+ggplot(data_summary_cases, aes(x = Total_Cases, y = reorder(COLD_DRINK_CHANNEL, Total_Cases), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = paste(Percentage, "%")), position = position_stack(vjust = 0.5), 
+            hjust = -0.01, color = "black", size = 3.2) +
+  labs(title = "Percentage of Cases (2023 and 2024) by Cold Drink Channel",
+       x = "Percentage of Total Cases", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::percent_format(scale = 1), expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette_extended) +  # Apply the custom color palette
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),   # Remove the x-axis title
+        axis.text.x = element_blank(),    # Remove the x-axis text
+        legend.position = "none",  # Remove the legend
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+
+```{r}
+# Summarize data by COLD_DRINK_CHANNEL, summing the quantities of gallons (QTD_DLV_GAL_2023 and QTD_DLV_GAL_2024)
+data_summary_gallons <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Gallons = sum(QTD_DLV_GAL_2023, na.rm = TRUE) + sum(QTD_DLV_GAL_2024, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Percentage = round(Total_Gallons / sum(Total_Gallons) * 100, 1))  # Calculate the percentage
+
+# Create a bar chart for the percentage of total gallons by cold drink channel
+ggplot(data_summary_gallons, aes(x = Total_Gallons, y = reorder(COLD_DRINK_CHANNEL, Total_Gallons), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = paste(Percentage, "%")), position = position_stack(vjust = 0.5), 
+            hjust = -0.01, color = "black", size = 3.2) +
+  labs(title = "Percentage of Gallons (2023 and 2024) by Cold Drink Channel",
+       x = "Percentage of Total Gallons", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::percent_format(scale = 1), expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette_extended) +  # Apply the custom color palette
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),   # Remove the x-axis title
+        axis.text.x = element_blank(),    # Remove the x-axis text
+        legend.position = "none",  # Remove the legend
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+#### 4.4.2 Cases and Gallons delivery costs by Channel
+
+```{r}
+# Summarize data by COLD_DRINK_CHANNEL, summing the delivery cost for cases (COST_CA_23 and COST_CA_24)
+data_summary_cases_cost <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Cases_Cost = sum(COST_CA_23, na.rm = TRUE) + sum(COST_CA_24, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Percentage = round(Total_Cases_Cost / sum(Total_Cases_Cost) * 100, 1))  # Calculate the percentage
+
+# Create a bar chart for the percentage of total cases cost by cold drink channel
+ggplot(data_summary_cases_cost, aes(x = Total_Cases_Cost, y = reorder(COLD_DRINK_CHANNEL, Total_Cases_Cost), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = paste(Percentage, "%")), position = position_stack(vjust = 0.5), 
+            hjust = -0.01, color = "black", size = 3.2) +
+  labs(title = "Percentage of Cases Delivery Cost (2023 and 2024) by Cold Drink Channel",
+       x = "Percentage of Total Cases Cost", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::percent_format(scale = 1), expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette_extended) +  # Apply the custom color palette
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),   # Remove the x-axis title
+        axis.text.x = element_blank(),    # Remove the x-axis text
+        legend.position = "none",  # Remove the legend
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+```{r}
+# Summarize data by COLD_DRINK_CHANNEL, summing the delivery cost for gallons (COST_GAL_23 and COST_GAL_24)
+data_summary_gallons_cost <- full_data_customer %>%
+  group_by(COLD_DRINK_CHANNEL) %>%
+  summarise(
+    Total_Gallons_Cost = sum(COST_GAL_23, na.rm = TRUE) + sum(COST_GAL_24, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(Percentage = round(Total_Gallons_Cost / sum(Total_Gallons_Cost) * 100, 1))  # Calculate the percentage
+
+# Create a bar chart for the percentage of total gallons cost by cold drink channel
+ggplot(data_summary_gallons_cost, aes(x = Total_Gallons_Cost, y = reorder(COLD_DRINK_CHANNEL, Total_Gallons_Cost), fill = COLD_DRINK_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = paste(Percentage, "%")), position = position_stack(vjust = 0.5), 
+            hjust = -0.01, color = "black", size = 3.2) +
+  labs(title = "Percentage of Gallons Delivery Cost (2023 and 2024) by Cold Drink Channel",
+       x = "Percentage of Total Gallons Cost", 
+       y = NULL) +  
+  scale_x_continuous(labels = scales::percent_format(scale = 1), expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette_extended) +  # Apply the custom color palette
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold")) +  
+  theme(axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),   # Remove the x-axis title
+        axis.text.x = element_blank(),    # Remove the x-axis text
+        legend.position = "none",  # Remove the legend
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+### 4.5 Trade Channel
+
+
+```{r, warning=FALSE}
+
+# Calculate the frequency of each TRADE_CHANNEL
+data_summary_trade_channel <- profile_data %>%
+  group_by(TRADE_CHANNEL) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+# Define a dynamic color palette to handle more than 9 categories
+num_colors <- length(unique(data_summary_trade_channel$TRADE_CHANNEL))
+custom_palette <- colorRampPalette(brewer.pal(9, "Set2"))(num_colors)
+
+# Create a horizontal bar chart
+ggplot(data_summary_trade_channel, aes(x = Count, y = reorder(TRADE_CHANNEL, Count), fill = TRADE_CHANNEL)) +
+  geom_bar(stat = "identity", position = "stack", alpha = 0.5) +  
+  geom_text(aes(label = ifelse(!is.na(Percentage), paste(Percentage, "%"), "")),  
+            position = position_stack(vjust = 0.5), 
+            hjust = -0.01, 
+            color = "black", size = 3.2) +
+  labs(title = "Percentage of Transactions by Trade Channel",
+       x = NULL, 
+       y = NULL) +  
+  scale_x_continuous(labels = NULL, expand = expansion(c(0, 0.05))) +  
+  scale_fill_manual(values = custom_palette) +  
+  theme_minimal() +  
+  theme(plot.title = element_text(size = 10, face = "bold"),
+        axis.text.y = element_text(size = 10),  
+        axis.title.x = element_blank(),  
+        legend.position = "none",  
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank())
+
+```
+
+Among the trade channel, Fast Casual Dining (19.7%), Comprehensive Dining (15.6%), and Other Dining Beverage (9.2%) rank among the top five, all directly related to dining, as their names suggest. Completing the top five are General Retail (9.3%) and Outdoor Activities (7.2%). Together, these categories account for 61% of the total.
+
+
+
+### 4.6 Sub Trade Channel
+
+The sub trade channel consists of 48 classes, so we decided to create a table for reference and queries.
+
+```{r}
+# Create a summary table for the frequency of each unique value in SUB_TRADE_CHANNEL
+data_summary_sub_trade_channel <- profile_data %>%
+  group_by(SUB_TRADE_CHANNEL) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))  
+
+# Display the interactive table with DT
+datatable(data_summary_sub_trade_channel, 
+          options = list(pageLength = 5, autoWidth = TRUE, dom = 'Bfrtip', 
+                         buttons = c('copy', 'csv', 'excel', 'pdf')))
+```
+
+Two sub-classes stand out: FSR MISC (15.6%) and OTHER DINING (9.2%). We need to consult the company again to understand the meaning of the first one.
+
+
+### 4.7 CO2 Customers
+
+```{r}
+# Calculate percentages for CO2_CUSTOMER
+co2_customer_summary <- profile_data %>%
+  group_by(CO2_CUSTOMER) %>%
+  summarise(Count = n()) %>%
+  mutate(Percentage = round(Count / sum(Count) * 100, 1))
+
+# Create the plot
+ggplot(co2_customer_summary, aes(x = CO2_CUSTOMER, y = Percentage, fill = as.factor(CO2_CUSTOMER))) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.6) +
+  geom_text(aes(label = paste0(Percentage, "%")), 
+            position = position_dodge(width = 0.8), vjust = 0.2, size = 3.5) +
+  labs(title = "Percentage Breakdown by CO2 Customers Status") +
+  scale_fill_manual(values = c("0" = "#8ED081", "1" = "#A7ADC6"), 
+                    labels = c("Non-CO2 Customers", "CO2 Customers")) +
+  scale_y_continuous(labels = percent_format(scale = 1)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.title = element_blank(),
+    legend.position = "right",  # Position the legend to the right
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(size = 10),
+    axis.ticks.y = element_blank()
+  ) +
+  scale_x_discrete(labels = c("0" = "Non-CO2 Customers", "1" = "CO2 Customers"))
+```
+
+Around 61% of customers do not consume CO2, including all local market partners. However, we still find that the percentage of customers consuming CO2 is relatively high, at nearly 39%.
+
+
+### 4.8 Transactions by Cases
+
+
+```{r}
+# Create the summary table with adjusted minimum value and median considering values > 0
+summary_cases <- data.frame(
+  type = c("ORDERED_CASES", "LOADED_CASES", "DELIVERED_CASES", "RETURNED_CASES"),
+  
+  # Calculating the minimum value considering values > 0 and rounding to four decimal places
+  min = c(
+    round(min(op_data$ORDERED_CASES[op_data$ORDERED_CASES > 0]), 4),
+    round(min(op_data$LOADED_CASES[op_data$LOADED_CASES > 0]), 4),
+    round(min(op_data$DELIVERED_CASES[op_data$DELIVERED_CASES > 0]), 4),
+    round(min(op_data$RETURNED_CASES[op_data$RETURNED_CASES > 0]), 4)
+  ),
+  
+  # Median calculation considering only values greater than 0
+  median = c(
+    median(op_data$ORDERED_CASES[op_data$ORDERED_CASES > 0]),
+    median(op_data$LOADED_CASES[op_data$LOADED_CASES > 0]),
+    median(op_data$DELIVERED_CASES[op_data$DELIVERED_CASES > 0]),
+    median(op_data$RETURNED_CASES[op_data$RETURNED_CASES > 0])
+  ),
+  
+  # Maximum without decimal places
+  max = c(
+    floor(max(op_data$ORDERED_CASES)),
+    floor(max(op_data$LOADED_CASES)),
+    floor(max(op_data$DELIVERED_CASES)),
+    floor(max(op_data$RETURNED_CASES))
+  ),
+  
+  # Sum with thousands separator
+  sum_qtd = c(
+    format(sum(op_data$ORDERED_CASES), big.mark = ","),
+    format(sum(op_data$LOADED_CASES), big.mark = ","),
+    format(sum(op_data$DELIVERED_CASES), big.mark = ","),
+    format(sum(op_data$RETURNED_CASES), big.mark = ",")
+  ),
+  
+  # Number of transactions with thousands separator
+  num_trans = c(
+    format(sum(op_data$ORDERED_CASES > 0), big.mark = ","),
+    format(sum(op_data$LOADED_CASES > 0), big.mark = ","),
+    format(sum(op_data$DELIVERED_CASES > 0), big.mark = ","),
+    format(sum(op_data$RETURNED_CASES > 0), big.mark = ",")
+  ),
+  
+  # Average quantity per transaction without decimals
+  avg_qtd_by_trans = c(
+    round(sum(op_data$ORDERED_CASES) / max(1, sum(op_data$ORDERED_CASES > 0))),
+    round(sum(op_data$LOADED_CASES) / max(1, sum(op_data$LOADED_CASES > 0))),
+    round(sum(op_data$DELIVERED_CASES) / max(1, sum(op_data$DELIVERED_CASES > 0))),
+    round(sum(op_data$RETURNED_CASES) / max(1, sum(op_data$RETURNED_CASES > 0)))
+  )
+)
+
+# Create the table using kableExtra for better formatting
+summary_cases %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:7, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "#ADD8E6") %>%  # Light blue header
+  add_header_above(c("CASES - Statistics by transactions greater than 0" = 7)) %>%
+  kable_paper("striped", full_width = F)
+
+```
+
+
+Considering all case transactions, we created the table above to generate some key metrics. The values for ORDERED CASES, LOADED CASES, and DELIVERED CASES are similar, as expected. There are records with quantities less than 1 unit, and the maximum values exceed 8,000 cases, with the average per transaction being approximately 35 cases.
+
+The number of transactions for RETURNED CASES is much smaller, but there was a return of 3,132 cases. The average number of cases per transaction is 60.
+
+
+```{r, message=FALSE, warning=FALSE, fig.width=6, fig.height=3}
+# Transforming the data to long format
+op_data_long <- op_data %>%
+  dplyr::select(ORDERED_CASES, LOADED_CASES, DELIVERED_CASES) %>%
+  pivot_longer(cols = everything(), names_to = "case_type", values_to = "count") %>%
+  mutate(case_type = factor(case_type, levels = c("ORDERED_CASES", "LOADED_CASES", "DELIVERED_CASES")))
+
+# Define border colors based on case_type
+border_colors <- c("ORDERED_CASES" = "grey", 
+                   "LOADED_CASES" = "lightblue", 
+                   "DELIVERED_CASES" = "darkblue")
+
+# Plot with histograms
+ggplot(op_data_long, aes(x = count)) +
+  geom_histogram(binwidth = 1, 
+                 aes(fill = case_type, color = case_type), 
+                 alpha = 0.7) +
+  facet_wrap(~case_type, scales = "free_x", nrow = 1, 
+             labeller = as_labeller(c("ORDERED_CASES" = "Ordered", 
+                                      "LOADED_CASES" = "Loaded", 
+                                      "DELIVERED_CASES" = "Delivered"))) +
+  scale_y_continuous(trans = 'log10', 
+                     breaks = scales::trans_breaks("log10", function(x) 10^x), 
+                     labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_x_continuous(limits = c(0, 5000)) +  # Limit x-axis to 5000
+  scale_color_manual(values = border_colors) +  
+  theme_minimal() +
+  labs(title = "Histograms of Case Counts", x = "Case Count", y = "Frequency (Log Scale)") +
+  theme(
+    strip.background = element_blank(),  
+    strip.text = element_text(color = "black", size = 9),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.grid.major.y = element_line(color = "grey", size = 0.5),  
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 6),
+    plot.title = element_text(size = 11, face = "bold", hjust = 0.5),  
+    strip.text.x = element_text(size = 8, hjust = 0.5),  
+    legend.position = "none",  
+    axis.text.y = element_text(size = 7),  
+    axis.title.y = element_text(size = 8),  
+    panel.spacing = unit(1, "lines")  
+  )
+
+```
+
+
+Above, we have the histogram of transactions related to case counts. We have limited the visualization to 5000 cases and applied a logarithmic scale for better interpretation. It is noticeable that the number of transactions decreases near 1900 cases and then increases again around 2000. This could potentially correlate with the larger clients.
+
+Below is the histogram of returned cases, where it is evident that the number of transactions is relatively low, with quantities generally not exceeding 250 cases. There are some transactions exceeding 1,000 cases, but they are rare. These were excluded to make the chart more interpretable.
+
+```{r, message=FALSE, warning=FALSE, fig.width=3, fig.height=3}
+
+# Transforming the data to long format for RETURNED_CASES
+op_data_long_returned <- op_data %>%
+  dplyr::select(RETURNED_CASES) %>%
+  pivot_longer(cols = everything(), names_to = "case_type", values_to = "count") %>%
+  mutate(case_type = factor(case_type, levels = c("RETURNED_CASES")))
+
+# Define border colors for RETURNED_CASES
+border_colors_returned <- c("RETURNED_CASES" = "black")
+
+# Plot with histogram for RETURNED_CASES
+ggplot(op_data_long_returned, aes(x = count)) +
+  geom_histogram(binwidth = 1, 
+                 aes(fill = case_type, color = case_type), 
+                 alpha = 0.7) +
+  scale_x_continuous(limits = c(0, 1000)) +  # Set max limit for x-axis
+  scale_y_continuous(trans = 'log10', 
+                     breaks = scales::trans_breaks("log10", function(x) 10^x), 
+                     labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_color_manual(values = border_colors_returned) +  
+  theme_minimal() +
+  labs(title = "Returned Case Counts", x = "Case Count", y = "Frequency (Log Scale)") +
+  theme(
+    strip.background = element_blank(),  
+    strip.text = element_text(color = "black", size = 9),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.grid.major.y = element_line(color = "grey", size = 0.5),  
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 6),
+    plot.title = element_text(size = 11, face = "bold", hjust = 0.5),  
+    strip.text.x = element_text(size = 8, hjust = 0.5),  
+    legend.position = "none",  
+    axis.text.y = element_text(size = 7),  
+    axis.title.y = element_text(size = 8),  
+    panel.spacing = unit(1, "lines")  
+  )
+
+```
+
+
+### 4.9 Transactions by Gallons
+
+
+```{r}
+# Create the summary table with adjusted minimum value and median considering values > 0 for GALLONS
+summary_gallons <- data.frame(
+  type = c("ORDERED_GALLONS", "LOADED_GALLONS", "DELIVERED_GALLONS", "RETURNED_GALLONS"),
+  
+  # Calculating the minimum value considering values > 0 and rounding to four decimal places
+  min = c(
+    round(min(op_data$ORDERED_GALLONS[op_data$ORDERED_GALLONS > 0]), 4),
+    round(min(op_data$LOADED_GALLONS[op_data$LOADED_GALLONS > 0]), 4),
+    round(min(op_data$DELIVERED_GALLONS[op_data$DELIVERED_GALLONS > 0]), 4),
+    round(min(op_data$RETURNED_GALLONS[op_data$RETURNED_GALLONS > 0]), 4)
+  ),
+  
+  # Median calculation considering only values greater than 0
+  median = c(
+    median(op_data$ORDERED_GALLONS[op_data$ORDERED_GALLONS > 0]),
+    median(op_data$LOADED_GALLONS[op_data$LOADED_GALLONS > 0]),
+    median(op_data$DELIVERED_GALLONS[op_data$DELIVERED_GALLONS > 0]),
+    median(op_data$RETURNED_GALLONS[op_data$RETURNED_GALLONS > 0])
+  ),
+  
+  # Maximum without decimal places
+  max = c(
+    floor(max(op_data$ORDERED_GALLONS)),
+    floor(max(op_data$LOADED_GALLONS)),
+    floor(max(op_data$DELIVERED_GALLONS)),
+    floor(max(op_data$RETURNED_GALLONS))
+  ),
+  
+  # Sum with no decimal places
+  sum_qtd = c(
+    format(floor(sum(op_data$ORDERED_GALLONS)), big.mark = ","),
+    format(floor(sum(op_data$LOADED_GALLONS)), big.mark = ","),
+    format(floor(sum(op_data$DELIVERED_GALLONS)), big.mark = ","),
+    format(floor(sum(op_data$RETURNED_GALLONS)), big.mark = ",")
+  ),
+  
+  # Number of transactions with thousands separator
+  num_trans = c(
+    format(sum(op_data$ORDERED_GALLONS > 0), big.mark = ","),
+    format(sum(op_data$LOADED_GALLONS > 0), big.mark = ","),
+    format(sum(op_data$DELIVERED_GALLONS > 0), big.mark = ","),
+    format(sum(op_data$RETURNED_GALLONS > 0), big.mark = ",")
+  ),
+  
+  # Average quantity per transaction without decimals
+  avg_qtd_by_trans = c(
+    round(sum(op_data$ORDERED_GALLONS) / max(1, sum(op_data$ORDERED_GALLONS > 0))),
+    round(sum(op_data$LOADED_GALLONS) / max(1, sum(op_data$LOADED_GALLONS > 0))),
+    round(sum(op_data$DELIVERED_GALLONS) / max(1, sum(op_data$DELIVERED_GALLONS > 0))),
+    round(sum(op_data$RETURNED_GALLONS) / max(1, sum(op_data$RETURNED_GALLONS > 0)))
+  )
+)
+
+# Create the table using kableExtra for better formatting
+summary_gallons %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:7, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "#FFCCCB") %>%  # Light blue header
+  add_header_above(c("GALLONS - Statistics by transactions greater than 0" = 7)) %>%
+  kable_paper("striped", full_width = F)
+
+```
+
+
+The values for ORDERED GALLONS, LOADED GALLONS, and DELIVERED GALLONS are similar, as expected. There are records with quantities less than 1 unit, and the maximum values exceed 2,200 gallons, with the average per transaction being approximately 21 gallons.  
+
+The number of gallon transactions is significantly lower than that of cases, at about 60%.
+
+The number of transactions for RETURNED GALLONS is much smaller, but there was a return of 1,792 gallons. The average number of gallons per transaction is 18.
+
+
+```{r, message=FALSE, warning=FALSE, fig.width=6, fig.height=3}
+# Transforming the data to long format for gallons
+op_data_long_gallons <- op_data %>%
+  dplyr::select(ORDERED_GALLONS, LOADED_GALLONS, DELIVERED_GALLONS) %>%
+  pivot_longer(cols = everything(), names_to = "gallon_type", values_to = "count") %>%
+  mutate(gallon_type = factor(gallon_type, levels = c("ORDERED_GALLONS", "LOADED_GALLONS", "DELIVERED_GALLONS")))
+
+# Define border colors based on gallon_type
+border_colors_gallons <- c("ORDERED_GALLONS" = "grey", 
+                           "LOADED_GALLONS" = "coral", 
+                           "DELIVERED_GALLONS" = "darkred")
+
+# Plot with histograms for gallons
+ggplot(op_data_long_gallons, aes(x = count)) +
+  geom_histogram(binwidth = 1, 
+                 aes(fill = gallon_type, color = gallon_type), 
+                 alpha = 0.7) +
+  facet_wrap(~gallon_type, scales = "fixed", nrow = 1, 
+             labeller = as_labeller(c("ORDERED_GALLONS" = "Ordered", 
+                                      "LOADED_GALLONS" = "Loaded", 
+                                      "DELIVERED_GALLONS" = "Delivered"))) +
+  scale_y_continuous(trans = 'log10', 
+                     breaks = scales::trans_breaks("log10", function(x) 10^x), 
+                     labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_color_manual(values = border_colors_gallons) +  
+  scale_x_continuous(limits = c(0, 1000)) +  # Limit the x-axis to 1000
+  theme_minimal() +
+  labs(title = "Histograms of Gallon Counts", x = "Gallon Count", y = "Frequency (Log Scale)") +
+  theme(
+    strip.background = element_blank(),  
+    strip.text = element_text(color = "black", size = 9),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.grid.major.y = element_line(color = "grey", size = 0.5),  
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 6),
+    plot.title = element_text(size = 11, face = "bold", hjust = 0.5),  
+    strip.text.x = element_text(size = 8, hjust = 0.5),  
+    legend.position = "none",  
+    axis.text.y = element_text(size = 7),  
+    axis.title.y = element_text(size = 8),  
+    panel.spacing = unit(1, "lines")  
+  )
+
+
+```
+
+We limited the histograms of gallon counts per transaction to 1000 for better visualization. There are only a few operations that exceed this limit. The vast majority of transactions do not exceed 500 gallons.
+
+```{r, message=FALSE, warning=FALSE, fig.width=3, fig.height=3}
+
+# Transforming the data to long format for RETURNED_GALLONS
+op_data_long_returned_gallons <- op_data %>%
+  dplyr::select(RETURNED_GALLONS) %>%
+  pivot_longer(cols = everything(), names_to = "gallon_type", values_to = "count") %>%
+  mutate(gallon_type = factor(gallon_type, levels = c("RETURNED_GALLONS")))
+
+# Define border colors for RETURNED_GALLONS
+border_colors_returned_gallons <- c("RETURNED_GALLONS" = "black")
+
+# Plot with histogram for RETURNED_GALLONS
+ggplot(op_data_long_returned_gallons, aes(x = count)) +
+  geom_histogram(binwidth = 1, 
+                 aes(fill = gallon_type, color = gallon_type), 
+                 alpha = 0.7) +
+  scale_y_continuous(trans = 'log10', 
+                     breaks = scales::trans_breaks("log10", function(x) 10^x), 
+                     labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_color_manual(values = border_colors_returned_gallons) +  
+  scale_x_continuous(limits = c(0, 500)) +  # Limit the x-axis to 500
+  theme_minimal() +
+  labs(title = "Returned Gallon Counts", x = "Gallon Count", y = "Frequency (Log Scale)") +
+  theme(
+    strip.background = element_blank(),  
+    strip.text = element_text(color = "black", size = 9),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor = element_blank(),  
+    panel.grid.major.y = element_line(color = "grey", size = 0.5),  
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 6),
+    plot.title = element_text(size = 11, face = "bold", hjust = 0.5),  
+    strip.text.x = element_text(size = 8, hjust = 0.5),  
+    legend.position = "none",  
+    axis.text.y = element_text(size = 7),  
+    axis.title.y = element_text(size = 8),  
+    panel.spacing = unit(1, "lines")  
+  )
+
+```
+
+The number of returned gallon transactions is much lower compared to cases. Overall, these transactions do not exceed 100 gallons.
+
+
+### 4.10 Transaction Dates Overview
+
+```{r}
+# Aggregate the transactions by month/year for gallons and cases delivered
+op_data_monthly_delivery <- op_data %>%
+  mutate(Month_Year = floor_date(TRANSACTION_DATE, "month")) %>%
+  group_by(Month_Year) %>%
+  summarise(Total_Delivered_Cases = sum(DELIVERED_CASES, na.rm = TRUE),
+            Total_Delivered_Gallons = sum(DELIVERED_GALLONS, na.rm = TRUE))
+
+# Reshape the data to long format for facet_wrap
+op_data_long_delivery <- op_data_monthly_delivery %>%
+  pivot_longer(cols = starts_with("Total_Delivered"), 
+               names_to = "Event", 
+               values_to = "Value")
+
+# Create the plot with the same Y-axis scale for both events
+ggplot(op_data_long_delivery, aes(x = Month_Year, y = Value, fill = Event)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Event, scales = "fixed", ncol = 1) +  # Use facet_wrap with a shared x-axis and same scale for both
+  labs(title = "Monthly Delivered Cases and Gallons JAN 2023 - DEZ 2024",
+       x = "Month",
+       y = "Total Units") +
+  theme_minimal() +
+  theme(legend.position = "none",  # Remove the legend
+        axis.text.x = element_text(size = 9),  # Adjust the size of x-axis labels for better readability
+        panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+        panel.grid.minor.x = element_blank()) +  # Remove minor vertical grid lines
+  scale_x_date(labels = scales::date_format("%b"), breaks = scales::date_breaks("1 month")) +  # Format x-axis to show only month abbreviations (JAN, FEB, etc.)
+  scale_y_continuous(labels = scales::comma) +  # Display Y-axis in full units (e.g., 1000 instead of 1K)
+  scale_fill_manual(values = c("Total_Delivered_Gallons" = "#FFCCCB", "Total_Delivered_Cases" = "#ADD8E6"))  # Set custom colors
+
+```
+
+The seasonal effect, related to lower temperatures (OCT-MAR), is more pronounced for the number of delivered cases than for gallons. Additionally, this chart highlights the significant difference in consumption between the two, as both quantities are represented on the same scale.
+
+```{r}
+# Aggregate the transactions by month/year for gallons and cases delivered
+op_data_monthly_delivery <- op_data %>%
+  mutate(Month_Year = floor_date(TRANSACTION_DATE, "month")) %>%
+  group_by(Month_Year) %>%
+  summarise(Total_Delivered_Cases = sum(DELIVERED_CASES, na.rm = TRUE),
+            Total_Delivered_Gallons = sum(DELIVERED_GALLONS, na.rm = TRUE))
+
+# Calculate the percentage of gallons in total (gallons + cases)
+op_data_monthly_delivery <- op_data_monthly_delivery %>%
+  mutate(Total_Sales = Total_Delivered_Cases + Total_Delivered_Gallons,
+         Percentage_Gallons = (Total_Delivered_Gallons / Total_Sales) * 100)
+
+# Create the plot with the percentage of gallons sold
+ggplot(op_data_monthly_delivery, aes(x = Month_Year, y = Percentage_Gallons)) +
+  geom_bar(stat = "identity", fill = "#FFCCCB") +  # Gallons color
+  labs(title = "Percentage of Gallons Sold Relative to Total Sales (2023-2024)",
+       x = "Month",
+       y = "Percentage of Gallons (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 9, angle = 0, hjust = 1),  # Rotate x-axis labels for better readability
+        panel.grid.major.x = element_blank(),  # Remove vertical grid lines
+        panel.grid.minor.x = element_blank()) +  # Remove minor vertical grid lines
+  scale_x_date(labels = scales::date_format("%b"), breaks = scales::date_breaks("1 month")) +  # Format x-axis to show month abbreviations
+  scale_y_continuous(labels = scales::percent_format(scale = 1), 
+                     breaks = seq(0, 100, by = 5))  # Set y-axis breaks to show percentages in 5% increments
+
+```
+
+The sale of gallons over the months remains between 20% and 25% of the total volume.
+
+
+
+
+### 4.11 Retailer Consumption Quantities
+
+```{r}
+# Count distinct Retailers
+cat("Number of Retailers:", n_distinct(full_data$PRIMARY_GROUP_NUMBER), "\n")
+
+# Count distinct stores
+cat("Number of Outlets/Stores:", n_distinct(full_data$CUSTOMER_NUMBER), "\n")
+```
+Of the 30,320 stores, many belong to the same chains, with 1,020 networks represented in the dataset. (PRIMARY_GROUP_NUMBER = 0 represents the single stores.)
+
+```{r}
+# Creates the total deliveries by customer type (Single Store or Retailer Group)
+total_delivered <- full_data %>%
+  mutate(customer_type = ifelse(PRIMARY_GROUP_NUMBER == 0, "Single Store", "Retailer Group")) %>%
+  group_by(customer_type) %>%
+  summarise(
+    qtd_cases_dlv_23 = sum(ifelse(YEAR == 2023, DELIVERED_CASES, 0), na.rm = TRUE),
+    qtd_cases_dlv_24 = sum(ifelse(YEAR == 2024, DELIVERED_CASES, 0), na.rm = TRUE),
+    total_qtd_cases_dlv = sum(DELIVERED_CASES, na.rm = TRUE),
+    total_qtd_gallons_dlv = sum(DELIVERED_GALLONS, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Calculates global totals for delivered cases and delivered gallons
+total_cases <- sum(full_data$DELIVERED_CASES, na.rm = TRUE)
+total_gallons <- sum(full_data$DELIVERED_GALLONS, na.rm = TRUE)
+
+# Calculates the percentage for each group
+total_delivered <- total_delivered %>%
+  mutate(
+    perc_total_qtd_cases = (total_qtd_cases_dlv / total_cases) * 100,
+    perc_total_gallons = (total_qtd_gallons_dlv / total_gallons) * 100
+  )
+
+# Converts to data.table for efficient processing
+setDT(total_delivered)
+
+# Rounds percentages
+total_delivered[, perc_total_qtd_cases := round(perc_total_qtd_cases, 0)]
+total_delivered[, perc_total_gallons := round(perc_total_gallons, 0)]
+
+# Adds a 'Total' row with global totals
+total_delivered_total <- total_delivered %>%
+  summarise(
+    customer_type = "Total",
+    qtd_cases_dlv_23 = sum(qtd_cases_dlv_23),
+    qtd_cases_dlv_24 = sum(qtd_cases_dlv_24),
+    total_qtd_cases_dlv = sum(total_qtd_cases_dlv),
+    total_qtd_gallons_dlv = sum(total_qtd_gallons_dlv),
+    perc_total_qtd_cases = 100,
+    perc_total_gallons = 100
+  ) %>%
+  as.data.table()
+
+# Combines the 'Total' row with the previous data
+total_delivered <- rbind(total_delivered, total_delivered_total)
+
+# Creates the cases table with the relevant columns
+cases_table <- total_delivered[, .(
+  customer_type,
+  qtd_cases_dlv_23,
+  qtd_cases_dlv_24,
+  total_qtd_cases_dlv,
+  perc_total_qtd_cases
+)]
+
+# Creates the gallons table with the same columns as the cases table
+gallons_table <- total_delivered[, .(
+  customer_type,
+  qtd_gallons_dlv_23 = total_qtd_gallons_dlv,  # Corresponding for 2023
+  qtd_gallons_dlv_24 = total_qtd_gallons_dlv,  # Corresponding for 2024
+  total_qtd_cases_dlv = total_qtd_gallons_dlv, # Total gallons
+  perc_total_qtd_cases = perc_total_gallons  # Percentage for gallons
+)]
+
+# Creates the total table with the relevant columns
+total_table <- total_delivered[, .(
+  customer_type, 
+  qtd_cas_gal_23 = qtd_cases_dlv_23 + total_qtd_gallons_dlv,
+  qtd_cas_gal_24 = qtd_cases_dlv_24 + total_qtd_gallons_dlv,
+  total_qtd_cas_gal = total_qtd_cases_dlv + total_qtd_gallons_dlv,
+  perc_total_qtd = ((total_qtd_cases_dlv + total_qtd_gallons_dlv) / (total_cases + total_gallons)) * 100
+)]
+
+# Rounds the percentage for the total table
+total_table[, perc_total_qtd := round(perc_total_qtd, 0)]
+
+# Format the numeric columns with a thousand separator for all tables
+format_cols_cases <- c("qtd_cases_dlv_23", "qtd_cases_dlv_24", "total_qtd_cases_dlv", "perc_total_qtd_cases")
+format_cols_gallons <- c("qtd_gallons_dlv_23", "qtd_gallons_dlv_24", "total_qtd_cases_dlv", "perc_total_qtd_cases")
+format_cols_total <- c("qtd_cas_gal_23", "qtd_cas_gal_24", "total_qtd_cas_gal", "perc_total_qtd")
+
+# Format the columns after the tables are created
+cases_table[, (format_cols_cases) := lapply(.SD, function(x) format(x, big.mark = ",", scientific = FALSE)), .SDcols = format_cols_cases]
+gallons_table[, (format_cols_gallons) := lapply(.SD, function(x) format(x, big.mark = ",", scientific = FALSE)), .SDcols = format_cols_gallons]
+total_table[, (format_cols_total) := lapply(.SD, function(x) format(x, big.mark = ",", scientific = FALSE)), .SDcols = format_cols_total]
+
+# Displays cases
+cases_table %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:5, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "#ADD8E6") %>%  # Light blue header
+  add_header_above(c("CASES - Statistics by deliveries greater than 0" = 5)) %>%
+  kable_paper("striped", full_width = F)
+
+```
+
+
+Considering cases, 80% of the volume went to stores that belong to larger groups.
+
+
+```{r}
+# Displays gallons
+gallons_table %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:5, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "#FFCCCB") %>%  # Light red header
+  add_header_above(c("GALLONS - Statistics by deliveries greater than 0" = 5)) %>%
+  kable_paper("striped", full_width = F)
+
+```
+
+
+As for gallons, the distribution is similar, with 53% going to single stores and 47% to retailer groups, indicating that local stores have a greater share in gallon consumption compared to cases.
+
+
+```{r}
+# Displays total (cases + gallons)
+total_table %>%
+  kable("html", escape = FALSE, align = "c") %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:5, width = "6em") %>%
+  row_spec(0, bold = TRUE, color = "black", background = "lightgray") %>%  # Light blue header
+  add_header_above(c("TOTAL - Combined Deliveries Quantities for Cases and Gallons" = 5)) %>%
+  kable_paper("striped", full_width = F)
+
+```
+
+
+The table below helps to better explore the data presented above.
+
+
+```{r, echo=FALSE, results=FALSE}
+# Summarizing CO2_CUSTOMER status and LOCAL_MARKET_PARTNER status
+status_summary <- full_data %>%
+  group_by(PRIMARY_GROUP_NUMBER) %>%
+  summarise(
+    co2_status = case_when(
+      all(CO2_CUSTOMER == 0) ~ "Only 0",
+      all(CO2_CUSTOMER == 1) ~ "Only 1",
+      TRUE ~ "Both 0 and 1"
+    ),
+    lmp_status = case_when(
+      all(LOCAL_MARKET_PARTNER == 0) ~ "Only 0",
+      all(LOCAL_MARKET_PARTNER == 1) ~ "Only 1",
+      TRUE ~ "Both 0 and 1"
+    )
+  ) %>%
+  filter(co2_status == "Only 0" & lmp_status == "Only 1")
+
+# View the filtered result
+status_summary
+```
+
+```{r}
+# Summarize delivered cases and gallons for 2023 and 2024
+summary_2023 <- full_data %>%
+  filter(YEAR == 2023) %>%
+  group_by(PRIMARY_GROUP_NUMBER) %>%
+  summarise(
+    cas_qtd_dlv23 = sum(DELIVERED_CASES, na.rm = TRUE),
+    gal_qtd_dlv23 = sum(DELIVERED_GALLONS, na.rm = TRUE)
+  )
+
+summary_2024 <- full_data %>%
+  filter(YEAR == 2024) %>%
+  group_by(PRIMARY_GROUP_NUMBER) %>%
+  summarise(
+    cas_qtd_dlv24 = sum(DELIVERED_CASES, na.rm = TRUE),
+    gal_qtd_dlv24 = sum(DELIVERED_GALLONS, na.rm = TRUE)
+  )
+
+# Merge summaries and compute total values
+group_demand <- full_join(summary_2023, summary_2024, by = "PRIMARY_GROUP_NUMBER") %>%
+  mutate(
+    across(c(cas_qtd_dlv23, gal_qtd_dlv23, cas_qtd_dlv24, gal_qtd_dlv24), ~replace_na(., 0)),
+    total_23 = cas_qtd_dlv23 + gal_qtd_dlv23,
+    total_24 = cas_qtd_dlv24 + gal_qtd_dlv24,
+    sum_23_24 = total_23 + total_24
+  ) %>%
+  rename(PGN = PRIMARY_GROUP_NUMBER) %>%
+  arrange(desc(sum_23_24)) 
+#  %>%
+#  filter(PGN != 0)  # Exclude rows where PRIMARY_GROUP_NUMBER is 0
+
+# Convert to data.table for performance
+setDT(group_demand)
+
+# Display interactive table with formatted numbers (without changing type)
+datatable(
+  group_demand, 
+  options = list(pageLength = 10, autoWidth = TRUE),
+  rownames = FALSE,
+  caption = "Quantity Delivered"
+) %>%
+  formatCurrency(
+    columns = c("cas_qtd_dlv23", "gal_qtd_dlv23", "cas_qtd_dlv24", "gal_qtd_dlv24", "total_23", "total_24", "sum_23_24"),
+    currency = "",  # No currency symbol
+    digits = 0,  # No decimal places
+    mark = ","  # Thousands separator
+  )
+
+```
+
+## 5. Results
+
+- The available data includes all deliveries made by Red Trucks. While we established an initial benchmark by designating certain deliveries as White Trucks, the lack of actual data on which customers are served by White Trucks may limit the accuracy of the model.  
+
+- The cost analysis that was used to determine whether Swire's current threshold of 400 gallons per year found that cost-wise Swire is pretty close to the optimal threshold. However, Swire could be more efficient by introducing additional variables than just the annual volume to determine which customer will be used for red truck and white truck deliveries. For example, some customer at certain cold drink channels have much lower costs than others, so they could be offered red truck deliveries even at lower costs.
+
+- Local market partners who purchase fountain-only products represent a very small customer segment (only 4.5% of the total), primarily concentrated in the restaurant sector. Their total volume (cases + gallons) accounts for just 1.6% (573,314 gallons) of the company's total distribution over the past two years (36 million cases + gallons).  
+
+- The most common order placement method among customers is Sales Reps (65.7%). However, when analyzing all transactions from the past two years, only 25% of orders were placed through Sales Reps, making it the third most used ordering method. This could suggest a declining influence of this channel and, consequently, a weaker relationship between the company and its customers.
+
+- The customer profile within the Cold Drink Channel differs significantly when comparing cases and gallons. In terms of cases, the top three segments (Bulk Trade, Workplaces, and Dining) received 65% of the volume. However, for gallons, only Dining and Events account for 80% of the total. This may indicate that the Cold Drink Channel itself could be a key criterion for selecting a fleet type dedicated to gallon deliveries.
+
+- Reinforcing the previous point, 83% of the company's total gallon delivery costs between 2023 and 2024 were allocated to Dining and Events. In contrast, Dining accounts for 34% of the costs associated with case deliveries, while Events represent 11%.
+
+
+## 6. Group Member Contribution
+
+- Andrew Delis – Participated in discussions to define the project approach, contributed to the development of initial concepts, and created an individual notebook. He aggregated individual notebooks, verified the initial datasets, and contributed to the final summary.  
+
+- Joonas Tahvanainen – Participated in discussions to define the project approach, contributed to the development of initial concepts, and created an individual notebook. He conducted cost analyses and contributed to the final summary.  
+
+- Kleyton Polzonoff – Participated in discussions to define the project approach, contributed to the development of initial concepts, and created an individual notebook. He developed aggregated datasets and contributed to the final summary.  
+
+- Nidal Arain – Participated in discussions to define the project approach, contributed to the development of initial concepts, and created an individual notebook. He assisted in data description and contributed to the final summary.
+
+
