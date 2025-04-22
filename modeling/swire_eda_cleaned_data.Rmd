@@ -1,0 +1,204 @@
+
+Run the block and you'll have:
+- customer_totals_simple: customer yearly volumes, separated by the year (2 rows per customer)
+- customer_totals_yearly: customer yearly volumnes with more columns, separated by the year (2 rows by customer)
+- customer_totals_wide: 1 row per customer. Should be best for modeling 
+
+Each dataframe has a target variable red_truck_flag 1/0 (1 if 400 gallons or more for the year, 0 if less than 400 gals)
+
+``` {r, warning = FALSE, message = FALSE}
+
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(skimr)
+library(janitor)
+library(lubridate)
+
+address_mapping <- read_csv("customer_address_and_zip_mapping.csv")
+customer_profile <- read_csv("customer_profile.csv")
+delivery_costs <- read_csv("delivery_cost_data.csv")
+transactions <- read_csv("transactional_data.csv")
+
+
+
+
+# clean address data by separating addresses
+address_mapping <- address_mapping %>%
+  rename(full_address = `full address`, zip_code = zip) %>%
+  separate(full_address, into = c("zip_full", "city", "state", "state_short", "county", "unknown", "latitude", "longitude"), sep = ",", convert = TRUE) %>% 
+  select(-unknown, -zip_full)
+
+
+# join cleaned address data to customer info
+customer_profile <- customer_profile %>% clean_names()
+customer_profile <- customer_profile %>% 
+  left_join(address_mapping, by = "zip_code")
+
+# assign 1 to customers not belonging to a group
+customer_profile <- customer_profile %>%
+  mutate(primary_group_number = ifelse(is.na(primary_group_number), 1, primary_group_number))
+
+
+# cleans column names in transactions
+transactions <- transactions %>% clean_names()
+
+# total gallons: since 1 case = 1 gallon, these columns can be summed up
+transactions <- transactions %>%
+  mutate(total_gallons_ordered = ordered_cases + ordered_gallons,
+         total_gallons_loaded = loaded_cases + loaded_gallons,
+         total_gallons_delivered = delivered_cases + delivered_gallons)
+
+
+# aggragates transations by customer and year. creates bunch of different summary variables such as totals and order averages
+transactions_agg <- transactions %>% 
+  group_by(customer_number, year) %>% 
+  summarise(total_orders = n(),
+            # totals for the year
+            ordered_cases = sum(ordered_cases),
+            loaded_cases = sum(loaded_cases),
+            delivered_cases = sum(delivered_cases),
+            ordered_gallons = sum(ordered_gallons),
+            loaded_gallons = sum(loaded_gallons),
+            delivered_gallons = sum(delivered_gallons),
+            total_gallons_ordered = sum(total_gallons_ordered),
+            total_gallons_loaded = sum(total_gallons_loaded),
+            total_gallons_delivered = sum(total_gallons_delivered),
+            # order averages for the year:
+            avg_ordered_cases = mean(ordered_cases),
+            avg_loaded_cases = mean(loaded_cases),
+            avg_delivered_cases = mean(delivered_cases),
+            avg_ordered_gallons = mean(ordered_gallons),
+            avg_loaded_gallons = mean(loaded_gallons),
+            avg_delivered_gallons = mean(delivered_gallons),
+            avg_total_gallons_ordered = mean(total_gallons_ordered),
+            avg_total_gallons_loaded = mean(total_gallons_loaded),
+            avg_total_gallons_delivered = mean(total_gallons_delivered)
+            ) %>%
+  ungroup()
+
+# joins aggregated transaction data to customers
+customer_totals_yearly <- customer_profile %>%
+  left_join(transactions_agg, by = "customer_number")
+
+
+# cleans up delivery costs. formats all vol_ranges in the same way so they can be split in the next part
+delivery_costs_clean <- delivery_costs %>%
+  mutate(vol_range = gsub("\\+", " - 99999", vol_range),
+         median_delivery_cost = as.numeric(gsub("\\$", "", median_delivery_cost)) ## median_delivery_cost is currently a characted and needs to be converted
+         ) 
+
+# splits vol_range to two columns: range_min and range_max. This will allow us to join delivery costs to the aggregated transaction data really easily
+delivery_costs_clean <- delivery_costs_clean %>% 
+  separate(vol_range, into = c("range_min", "range_max"), sep = " - ", remove=FALSE, convert=TRUE)
+
+# reassign cleaned delivery costs to the original dataframe
+delivery_costs <- delivery_costs_clean
+
+# separating the delivery costs for cases and gallons. Again, this will make joining to the customer aggs much easier
+delivery_costs_cases <- delivery_costs %>%
+  filter(applicable_to == "Bottles and Cans")
+delivery_costs_gallons <- delivery_costs %>%
+  filter(applicable_to == "Fountain")
+
+# joining the cases costs to the customer yearly totals
+customer_totals_yearly <- customer_totals_yearly %>%
+  left_join(delivery_costs_cases, by = "cold_drink_channel") %>%
+  filter(ordered_cases >= range_min & ordered_cases <= range_max) %>%
+  rename(cost_per_case = median_delivery_cost) %>%
+  select(-range_min, -range_max, -applicable_to, -cost_type, -vol_range)
+
+
+# joining the gallons costs to the customer yearly totals.
+customer_totals_yearly <- customer_totals_yearly %>%
+  left_join(delivery_costs_gallons, by = "cold_drink_channel") %>%
+  filter(ordered_gallons >= range_min & ordered_gallons <= range_max) %>%
+  rename(cost_per_gallon = median_delivery_cost) %>%
+  select(-range_min, -range_max, -applicable_to,  -cost_type, -vol_range)
+
+
+# this just creates volume buckets
+customer_totals_yearly <- customer_totals_yearly %>%
+  mutate(ordered_cases_cost = cost_per_case * ordered_cases,
+         ordered_gallons_cost = cost_per_gallon * ordered_gallons,
+         total_delivery_cost = ordered_cases_cost + ordered_gallons_cost,
+         avg_cost_per_order = total_delivery_cost / total_orders,
+         avg_cost_per_gallon = total_delivery_cost / total_gallons_ordered,
+         red_truck_flag = ifelse(total_gallons_ordered >= 400, 1, 0),
+         volume_bucket = case_when(
+          total_gallons_ordered < 100 ~ "Less than 100",
+          total_gallons_ordered >= 100 & total_gallons_ordered <= 200 ~ "100-200",
+          total_gallons_ordered >= 201 & total_gallons_ordered <= 300 ~ "201-300",
+          total_gallons_ordered >= 301 & total_gallons_ordered <= 400 ~ "301-400",
+          total_gallons_ordered >= 401 & total_gallons_ordered <= 500 ~ "401-500",
+          total_gallons_ordered >= 501 & total_gallons_ordered <= 600 ~ "501-600",
+          total_gallons_ordered >= 601 & total_gallons_ordered <= 700 ~ "601-700",
+          total_gallons_ordered >= 701 & total_gallons_ordered <= 800 ~ "701-800",
+          total_gallons_ordered >= 801 & total_gallons_ordered <= 900 ~ "801-900",
+          total_gallons_ordered >= 901 & total_gallons_ordered <= 1000 ~ "901-1000",
+          total_gallons_ordered > 1000 ~ "More than 1000"
+    ))
+
+# this adds columns for how long the customer has been on board and how long since their first order.
+# this could be good information for predicting the target variable
+customer_totals_yearly <- customer_totals_yearly %>%
+  mutate(
+    first_delivery_date = mdy(first_delivery_date),
+    on_boarding_date = mdy(on_boarding_date),
+    last_day_of_year = make_date(year, 12, 31),
+    days_since_onboarding = as.integer(last_day_of_year - on_boarding_date),
+    days_since_first_delivery = as.integer(last_day_of_year - first_delivery_date)
+  )
+
+
+# this selects the most important variables and creates a simplified dataset
+# Because swire determines the customer volumes by orders - not loadings or deliveries, I'm only focused on ordered volumes here
+customer_totals_simple <- customer_totals_yearly %>% 
+  select(customer_number, year, primary_group_number, frequent_order_type, cold_drink_channel, trade_channel,
+         sub_trade_channel, local_market_partner, co2_customer, zip_code, city, state_short, county, total_orders,
+         ordered_cases, ordered_gallons, total_gallons_ordered, avg_ordered_cases, avg_ordered_gallons, avg_total_gallons_ordered, ordered_cases_cost,
+         ordered_gallons_cost, total_delivery_cost, avg_cost_per_order, avg_cost_per_gallon, red_truck_flag, volume_bucket, days_since_onboarding,
+         days_since_first_delivery) %>%
+  rename(avg_cases_per_order = avg_ordered_cases,
+         avg_gallons_per_order= avg_ordered_gallons,
+         avg_total_gallons_per_order = avg_total_gallons_ordered)
+
+
+
+
+# this next chunk creates a wide-format, 1 row per customer with their 2023 volumes labeled as previous and 2024 labeled as current
+customer_totals_2023 <- customer_totals_simple %>% filter(year == 2023)
+customer_totals_2024 <- customer_totals_simple %>% filter(year == 2024)
+
+customer_totals_2023 <- customer_totals_2023 %>%
+  select(customer_number, total_orders, ordered_cases, ordered_gallons, total_gallons_ordered, avg_cases_per_order, avg_gallons_per_order,
+         avg_total_gallons_per_order, ordered_cases_cost, ordered_gallons_cost, total_delivery_cost, avg_cost_per_order, avg_cost_per_gallon,
+         red_truck_flag, volume_bucket, days_since_onboarding, days_since_first_delivery) %>%
+  rename_with(~ paste0(., "_previous"), 
+              -customer_number)
+
+customer_totals_wide <- customer_totals_2024 %>%
+  left_join(customer_totals_2023, by = "customer_number")
+
+
+# this creates yearly changes in percentages as columns
+customer_totals_wide <- customer_totals_wide %>%
+  mutate(
+    yoy_total_orders = round((total_orders - total_orders_previous) / total_orders_previous, 3),
+    yoy_ordered_cases = round((ordered_cases - ordered_cases_previous) / ordered_cases_previous, 3),
+    yoy_ordered_gallons = round((ordered_gallons - ordered_gallons_previous) / ordered_gallons_previous, 3),
+    yoy_total_gallons_ordered = round((total_gallons_ordered - total_gallons_ordered_previous) / total_gallons_ordered_previous, 3)
+  )
+
+# removes unnecessary dataframes. comment out any that you might want to view
+rm(transactions_agg
+   , delivery_costs_cases
+   , delivery_costs_gallons
+   , customer_profile
+   , address_mapping
+   , delivery_costs
+   , delivery_costs_clean
+   , transactions
+   , customer_totals_2023
+   , customer_totals_2024)
+```
